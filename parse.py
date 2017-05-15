@@ -4,16 +4,19 @@ import glob
 import io
 from HTMLParser import HTMLParser
 import os
-import yaml
 import sys
-import io
 import collections
+import math
+
+import yaml
 
 sys.path.append(os.path.join(os.path.dirname(__file__), r'C:\Users\jbr\OneDrive\MERP\merp-m6-traits\scripts'))
 from worms import col
 
 with open('name_map.yaml', 'rU') as f:
     name_map = yaml.load(f)
+
+name2units = {}
 
 class MyHTMLParser(HTMLParser):
     def __init__(self):
@@ -46,6 +49,10 @@ class MyHTMLParser(HTMLParser):
             self.state -= 1
             if self.content:
                 self.params[self.content[0]] = float(self.content[1])
+                if self.content[0] in name2units:
+                    assert name2units[self.content[0]] == self.content[2], 'Unit mismatch for %s: %s vs. %s' % (self.content[0], name2units[self.content[0]], self.content[2])
+                else:
+                    name2units[self.content[0]] = self.content[2].strip()
         if self.state == 7 and tag == 'a':
             self.model = ''.join(self.content)
             self.state = 5
@@ -89,10 +96,21 @@ for path in glob.glob('entries_web/*_par.html'):
             results.append((species, col_id, parser.params))
 parnames = list(parnames)
 
-with io.open('traits.txt', 'w', encoding='utf-8') as f:
-    f.write(u'Name\tCoL ID\t%s\n' % ('\t'.join(parnames),))
+with io.open('traits.txt', 'w', encoding='utf-8') as f, io.open('traits_log.txt', 'w', encoding='utf-8') as flog:
+    f.write(u'Name\tCoL ID\t%s\n' % ('\t'.join(['%s (%s)' % (name, name2units[name]) for name in parnames]),))
+    flog.write(u'Name\tCoL ID\t%s\n' % ('\t'.join(['%s (log10 %s)' % (name, name2units[name]) for name in parnames]),))
     for species, col_id, parameters in results:
-        f.write(u'%s\t%s\t%s\n' % (species, col_id, '\t'.join(['%s' % parameters.get(name, '') for name in parnames])))
+        f.write(u'%s\t%s' % (species, col_id))
+        flog.write(u'%s\t%s' % (species, col_id))
+        for name in parnames:
+            value = parameters.get(name, u'')
+            logvalue = u''
+            if isinstance(value, float) and value > 0:
+                logvalue = math.log10(value)
+            f.write(u'\t%s' % value)
+            flog.write(u'\t%s' % logvalue)
+        f.write(u'\n')
+        flog.write(u'\n')
 
 print('No TSN found for:')
 for species in no_tsns:
