@@ -68,6 +68,7 @@ class MyHTMLParser(HTMLParser):
 no_tsns = set()
 no_cols = set()
 results = []
+model2count = {}
 parnames = set()
 for path in glob.glob('entries_web/*_par.html'):
     print(path)
@@ -94,7 +95,12 @@ for path in glob.glob('entries_web/*_par.html'):
         if col_id is not None:
             parnames.update(parser.params.keys())
             results.append((species, col_id, parser.params))
+        model2count[parser.model] = model2count.get(parser.model, 0) + 1
 parnames = list(parnames)
+
+print('Model types (number of occurrences)')
+for model, count in sorted(model2count.items(), cmp=lambda x, y: cmp(y[1], x[1])):
+    print('  %s: %i' % (model, count))
 
 with io.open('traits.txt', 'w', encoding='utf-8') as f, io.open('traits_log.txt', 'w', encoding='utf-8') as flog:
     f.write(u'Name\tCoL ID\t%s\n' % ('\t'.join(['%s (%s)' % (name, name2units[name]) for name in parnames]),))
