@@ -10,6 +10,8 @@ import math
 
 import yaml
 
+allowed_models = frozenset(('std',))
+
 sys.path.append(os.path.join(os.path.dirname(__file__), r'C:\Users\jbr\OneDrive\MERP\merp-m6-traits\scripts'))
 from worms import col
 
@@ -54,7 +56,7 @@ class MyHTMLParser(HTMLParser):
                 else:
                     name2units[self.content[0]] = self.content[2].strip()
         if self.state == 7 and tag == 'a':
-            self.model = ''.join(self.content)
+            self.model = (''.join(self.content)).strip()
             self.state = 5
         if self.state == 5 and tag == 'h2':
             self.state = 0
@@ -92,9 +94,10 @@ for path in glob.glob('entries_web/*_par.html'):
         print('  model: %s' % parser.model)
         for name, value in parser.params.items():
             print('  %s: %s' % (name, value))
-        if col_id is not None:
+        if col_id is not None and (parser.model in allowed_models or len(allowed_models)==0):
             parnames.update(parser.params.keys())
             results.append((species, col_id, parser.params))
+            print('  INCLUDED in trait table')
         model2count[parser.model] = model2count.get(parser.model, 0) + 1
 parnames = list(parnames)
 
@@ -102,7 +105,13 @@ print('Model types (number of occurrences)')
 for model, count in sorted(model2count.items(), cmp=lambda x, y: cmp(y[1], x[1])):
     print('  %s: %i' % (model, count))
 
-with io.open('traits.txt', 'w', encoding='utf-8') as f, io.open('traits_log.txt', 'w', encoding='utf-8') as flog:
+postfix = ''
+if allowed_models:
+    print('%i records found for allowed model set: %s' % (len(results), '+'.join(allowed_models),))
+    postfix = '_%s' % ('+'.join(allowed_models),)
+else:
+    print('%i records found (all model types allowed).' % len(results))
+with io.open('traits%s.txt' % postfix, 'w', encoding='utf-8') as f, io.open('traits%s_log.txt' % postfix, 'w', encoding='utf-8') as flog:
     f.write(u'Name\tCoL ID\t%s\n' % ('\t'.join(['%s (%s)' % (name, name2units[name]) for name in parnames]),))
     flog.write(u'Name\tCoL ID\t%s\n' % ('\t'.join(['%s (log10 %s)' % (name, name2units[name]) for name in parnames]),))
     for species, col_id, parameters in results:
