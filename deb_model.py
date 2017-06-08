@@ -1,5 +1,7 @@
 from __future__ import print_function
 
+import os
+
 import numpy
 import scipy.integrate
 
@@ -17,6 +19,7 @@ class DEB_model(object):
         self.h_a = None #Weibull aging acceleration (1/d^2)
         self.s_G = None #Gompertz stress coefficient
         self.kap_R = None # reproductive efficiency
+        self.kap_X = None # ???
 
         # stf
         # foetal development (rather than egg development)
@@ -85,11 +88,20 @@ class DEB_model(object):
         # derived parameters
         self.E_0 = None
         self.L_b = None
-        self.t_b = None
+        self.a_b = None
+        self.a_99 = None
         # L_m = kappa*v*E_m/p_M = kappa*p_Am/p_M [L_m is maximum length in absence of surface=-area-specific maintenance!]
         # z = L_m/L_m_ref with L_m_ref = 1 cm - equal to L_m
 
-    def get_lb(self):
+        self.initialized = False
+        self.valid = False
+
+    def initialize(self, E_0_ini=None):
+        self.kap = max(min(self.kap, 1.), 0.)
+        self.kap_R = max(min(self.kap_R, 1.), 0.)
+        self.kap_X = max(min(self.kap_X, 1.), 0.)
+        self.E_Hj = max(self.E_Hb, self.E_Hj)
+        self.initialized = True
         kap = self.kap
         v = self.v
         E_G = self.E_G
@@ -100,19 +112,27 @@ class DEB_model(object):
         g = E_G/kap/E_m
         k_M = self.p_M/E_G
         L_m = kap*self.p_Am/self.p_M
+        f = self.f
+
+        assert E_m > 0
+        assert L_m > 0
+        assert self.h_a > 0
+        #assert self.s_G > 0
 
         E_G_per_kappa = E_G/kap
         p_S_per_kappa = p_S/kap
         one_minus_kappa = 1-kap
 
         def error_in_E(p, delta_t):
-            E_0 = 10.**p[0]
+            if not isinstance(p, float):
+                p = float(numpy.asscalar(p))
+            E_0 = 10.**p
             state = get_birth_state(E_0, delta_t)
             if state is None:
                 return numpy.inf
-            t_b, E_b, L_b = state
+            a_b, E_b, L_b = state
             ssq = (E_b/L_b**3 - E_m)**2
-            #print('E_0 = %.3g J, t_b = %.3f d, L_b = %.3f cm - SSQ = %s' % (E_0, t_b, L_b, ssq))
+            #print('E_0 = %.3g J, a_b = %.3f d, L_b = %.3f cm - SSQ = %s' % (E_0, a_b, L_b, ssq))
             return ssq
 
         def get_birth_state(E_0, delta_t=1.):
@@ -143,23 +163,124 @@ class DEB_model(object):
                     return
             return t, E, L
 
+        def find_maturity(E_H_target, delta_t=1., s_M=1., t_ini=None, E_H_ini=None, L_ini=None, t_max=numpy.inf):
+            exp = numpy.exp
+            r_B = self.r_B
+
+            if t_ini is None:
+                t_ini = self.a_b
+            if E_H_ini is None:
+                E_H_ini = self.E_Hb
+            if L_ini is None:
+                L_ini = self.L_b
+            t = 0.
+            E_H = E_H_ini
+            done = False
+            while not done:
+                L = (f*s_M*L_m-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
+                p_C = L*L*L*E_m*(v*E_G_per_kappa/L*s_M + p_S_per_kappa)/(E_m + E_G_per_kappa)
+                dE_H = (1. - kap)*p_C - k_J*E_H
+                if E_H + delta_t * dE_H > E_H_target:
+                    delta_t = (E_H_target - E_H)/dE_H
+                    done = True
+                E_H += dE_H*delta_t
+                t += delta_t
+                if t > t_max:
+                    return None, None
+            L = (f*s_M*L_m-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
+            return t + t_ini, L
+
+        def find_maturity_v1(E_H_target, delta_t=1., t_max=numpy.inf):
+            exp = numpy.exp
+            L_b = self.L_b
+            V_b = L_b**3
+
+            # dL = (E*v*L/L_b-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
+            #    = (E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa) * L
+            r = 3*(E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa)
+            prefactor = V_b*E_m*(v*E_G_per_kappa/L_b + p_S_per_kappa)/(E_m + E_G_per_kappa)
+
+            t = 0.
+            E_H = self.E_Hb
+            done = False
+            while not done:
+                p_C = prefactor*exp(r*t)
+                dE_H = (1. - kap)*p_C - k_J*E_H
+                if E_H + delta_t * dE_H > E_H_target:
+                    delta_t = (E_H_target - E_H)/dE_H
+                    done = True
+                E_H += dE_H*delta_t
+                t += delta_t
+                if t > t_max:
+                    return None, None
+            L = L_b*exp(r/3*t)
+            return t + self.a_b, L
+
         import scipy.optimize
-        p = numpy.log10(E_G*L_m**3),
+        if E_0_ini is None:
+            E_0_ini = max(E_Hb, E_G*L_m**3)
+        for i in range(10):
+            if get_birth_state(E_0_ini) is not None:
+                break
+            E_0_ini *= 10
+        else:
+            return
+
+        p = numpy.log10(E_0_ini),
+        bracket = (p[0], p[0]+1)
         initial_simplex = None
         for delta_t in (1., 0.1, 0.01):
-            p_new = scipy.optimize.fmin(error_in_E, p, args=(delta_t, ), initial_simplex=initial_simplex, disp=False)
-            step = p_new[0] - p[0]
-            initial_simplex = numpy.array(((p_new[0] - step/10, ), (p_new[0] + step/10, )))
+            if True:
+                p_new = scipy.optimize.minimize_scalar(error_in_E, bracket=bracket, args=(delta_t, )).x,
+                step = min(abs(p_new[0] - p[0])/10, 1.)
+                bracket = (p_new[0] - step, p_new[0] + step,)
+            else:
+                p_new = scipy.optimize.fmin(error_in_E, p, args=(delta_t, ), disp=False) #, initial_simplex=initial_simplex
+                step = min(abs(p_new[0] - p[0])/10, 1.)
+                initial_simplex = numpy.array(((p_new[0] - step, ), (p_new[0] + step, )))
             p = p_new
             E_0 = 10.**p[0]
-            print(E_0, get_birth_state(E_0, delta_t=delta_t))
+            #print(E_0, get_birth_state(E_0, delta_t=delta_t))
         self.E_0 = E_0
-        self.t_b, Em, self.L_b = get_birth_state(E_0, delta_t=0.01)
+        birth_state = get_birth_state(E_0, delta_t=0.01)
+        if birth_state is None:
+            return
+        self.a_b, Em, self.L_b = birth_state
+        self.r_B = p_S/3/(self.f*E_m*kap + E_G) # checked against p52, but note p_S -> p_M
+        self.a_99 = self.a_b - numpy.log(1 - (0.99*self.f*L_m - self.L_b)/(self.f*L_m - self.L_b))/self.r_B
+        self.E_m = E_m
+        self.L_m = L_m
+        self.a_j, self.L_j = find_maturity_v1(self.E_Hj, delta_t=self.a_b/100, t_max=self.a_99*100)
+        if self.a_j is None:
+            return
+        self.s_M = self.L_j/self.L_b
+        self.L_i = self.L_m*self.s_M
+        self.a_p, self.L_p = find_maturity(self.E_Hp, delta_t=self.a_b/100, s_M=self.s_M, t_ini=self.a_j, E_H_ini=self.E_Hj, L_ini=self.L_j, t_max=self.a_99*100)
+        if self.a_p is None:
+            return
+        p_C_i = self.L_i**3 * E_m * (v*E_G_per_kappa*self.s_M/self.L_i + p_S_per_kappa)/(E_m + E_G_per_kappa)
+        self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
+        self.valid = True
 
-    def simulate(self, delta_t=0.01):
-        if self.E_0 is None:
-            self.get_lb()
-        c_T = 1. #2.6831
+    def report(self, c_T=1.):
+        if not self.initialized:
+            self.initialize()
+        print('E_0 [cost of an egg] = %s' % self.E_0)
+        print('r_B [von Bertalanffy growth rate] = %s' % (c_T*self.r_B))
+        print('a_b [age at birth] = %s' % (self.a_b/c_T))
+        print('a_j [age at metamorphosis] = %s' % (self.a_j/c_T))
+        print('a_p [age at puberty] = %s' % (self.a_p/c_T))
+        print('a_99 [age at L = 0.99 L_m] = %s' % (self.a_99/c_T))
+        print('[E_m] [reserve capacity] = %s' % self.E_m)
+        print('L_i [ultimate length - still incl heating length!] = %s' % self.L_i)
+        print('s_M [acceleration factor at f=1] = %s' % self.s_M)
+        print('R_i [ultimate reproduction rate] = %s' % (self.R_i*c_T))
+
+    def simulate(self, t=None, c_T=1.):
+        if not self.initialized:
+            self.initialize()
+        if not self.valid:
+            return None, None
         kap = self.kap
         v = self.v*c_T
         k_J = self.k_J*c_T
@@ -173,87 +294,213 @@ class DEB_model(object):
         h_a = self.h_a*c_T*c_T
         E_0 = self.E_0
         kap_R = self.kap_R
+        s_M = self.s_M
+        L_b = self.L_b
 
         p_S = p_M
-        E_m = p_Am*f/v
+        E_m = p_Am/v
         L_m = kap*p_Am/p_M
         L_m3 = L_m**3
         E_G_per_kappa = E_G/kap
         p_S_per_kappa = p_S/kap
         one_minus_kappa = 1-kap
 
-        # NB scaled reserve density e = E/E_m with E_m = p_Am/v
-        # scaled length l = L/L_m
-        # From book p51: L_m = v/(g*k_M); inserting g = E_G/kappa/E_m -> L_m = v*kappa*E_m/E_G/k_M = kappa*p_Am/p_M
-        E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
-        result = []
-        while 1:
-            #p_C = (v/L*E_G + p_S)/(kappa*E + E_G)
-            #dE_H = (1-kappa)*p_C - k_J*E_H
-            #dL = (E*v-p_S/kappa*L)/3/(E+E_G/kappa)
+        if t is None:
+            t = numpy.linspace(0., self.a_99/c_T, 1000)
+        dt = t[1] - t[0]
+
+        def dy_embryo(y, t0):
+            E, L, E_H, Q, H, S, cumt = map(float, y)
             L2 = L*L
             L3 = L*L2
             p_C = E*(v*L2*E_G_per_kappa + p_S_per_kappa*L3)/(E + E_G_per_kappa*L3)
             dL = (E*v-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
             dE = -p_C
-            if E_H > E_Hb:
-                dE += p_Am*L2*f
+            dE_H = one_minus_kappa*p_C - k_J*E_H
+            dH = Q
+            dQ = (Q/L_m3*s_G + h_a)*p_C/E_m
+            dS = 0. if L3 == 0 else -H/L3*S
+            dcumt = S
+            return numpy.array((dE, dL, dE_H, dQ, dH, dS, dcumt))
+
+        def dy(y, t0):
+            E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
+            L2 = L*L
+            L3 = L*L2
+            s = max(1., min(s_M, L/L_b))
+            #s = 1.
+
+            # Energy fluxes in J/d
+            p_C = E*(v*L2*E_G_per_kappa*s + p_S_per_kappa*L3)/(E + E_G_per_kappa*L3)
+            p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
+            p_R = one_minus_kappa*p_C - k_J*E_H # J/d
+
+            # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
+            dE = p_A - p_C
+            dL = (E*v*s-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
             if E_H < E_Hp:
-                dE_H = one_minus_kappa*p_C - k_J*E_H
+                dE_H = p_R
                 dE_R = 0.
             else:
                 dE_H = 0
-                dE_R = one_minus_kappa*p_C - k_J*E_H
+                dE_R = kap_R * p_R
+
+            # Damage-inducing compounds, damage, survival (0-1) - p 216
+            dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
             dH = Q
-            dQ = (Q/L_m3*s_G + h_a)*p_C/E_m
-            dcumR = S*kap_R*dE_R/E_0
-            if H > 0:
-                dS = -H/L3*S
-            else:
-                dS = 0.
+            dS = 0. if L3 <= 0. or S<1e-16 else -min(1./(dt+1e-8), H/L3)*S
+
+            # Cumulative reproduction (#) and life span (d)
+            dcumR = S*dE_R/E_0
             dcumt = S
-            E += delta_t * dE
-            L += delta_t * dL
-            E_H += delta_t * dE_H
-            E_R += delta_t * dE_R
-            Q += delta_t * dQ
-            H += delta_t * dH
-            S += delta_t * dS
-            cumR += delta_t * dcumR
-            cumt += delta_t * dcumt
-            result.append((E, L, E_H, E_R, Q, H, S, cumR, cumt))
-            if S < 1e-3:
-                break
 
-        return numpy.arange(len(result)) * delta_t, numpy.array(result)
+            return numpy.array((dE, dL, dE_H, dE_R, dQ, dH, dS, dcumR, dcumt), dtype=float), dE_R/E_0
 
-    def plotResult(self, t, result):
+        if False:
+            import scipy.integrate
+            y0 = numpy.array((E_0, 0., 0., 0., 0., 1., 0.))
+            it_b = t.searchsorted(self.a_b)
+            t_embryo = t[:it_b]
+            t_adult = t[it_b:]
+            result = scipy.integrate.odeint(dy_embryo, y0, t_embryo)
+            L = (f*L_m-self.L_b)*(1 - numpy.exp(-self.r_B*(t_adult - self.a_b))) + self.L_b # p 52
+            result2 = numpy.zeros((L.shape[0], result.shape[1]))
+            result2[:, 1] = L
+            return t, result[:, 1], result[:, -1]
+        else:
+            y0 = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
+            result = numpy.empty((t.size, y0.size))
+            allR = numpy.empty((t.size,))
+            result[0, :] = y0
+            yold = y0
+            for it, curt in enumerate(t[1:]):
+                derivative, R = dy(yold, curt)
+                yold = yold + dt*derivative
+                result[it+1, :] = yold
+                allR[it+1] = R
+            return t, result[:, 1], result[:, 6], allR, result[:, 2]
+
+    def plotResult(self, t, L, S, R, M):
         from matplotlib import pyplot
         fig = pyplot.figure()
         ax = fig.add_subplot(411)
-        ijuv = result[:, 2].searchsorted(self.E_Hb)
-        ipub = result[:, 2].searchsorted(self.E_Hp)
-        ax.plot(t[:ijuv], result[:ijuv, 1], '-g')
-        ax.plot(t[ijuv:ipub], result[ijuv:ipub, 1], '-b')
-        ax.plot(t[ipub:], result[ipub:, 1], '-r')
+        ijuv = M.searchsorted(self.E_Hb)
+        ipub = M.searchsorted(self.E_Hp)
+        ax.plot(t[:ijuv], L[:ijuv], '-g')
+        ax.plot(t[ijuv:ipub], L[ijuv:ipub], '-b')
+        ax.plot(t[ipub:], L[ipub:], '-r')
+        ax.set_title('structural length')
+        #ax.plot(t, L, '-b')
         ax.grid()
 
         ax = fig.add_subplot(412)
         ax.set_title('maturity')
-        ax.plot(t, result[:, 2], '-b')
+        ax.plot(t, M, '-b')
         ax.grid()
 
         ax = fig.add_subplot(413)
-        ax.set_title('cumulative reproductive output')
-        ax.plot(t, result[:, 7], '-b')
+        ax.set_title('reproduction rate')
+        ax.plot(t, R, '-b')
         ax.grid()
 
         ax = fig.add_subplot(414)
         ax.set_title('survival')
-        ax.plot(t, result[:, 6], '-b')
+        ax.plot(t, S, '-b')
         ax.grid()
 
         pyplot.show()
+
+def plot(ax, t, values, perc_wide = 0.025, perc_narrow = 0.25, ylabel=None, title=None, color='k'):
+    values.sort()
+    n = values.shape[1]
+    perc_50 = values[:, int(0.5*n)]
+    if n > 1:
+        if perc_wide is not None:
+            perc_wide_l = values[:, int(perc_wide*n)]
+            perc_wide_u = values[:, int((1-perc_wide)*n)]
+            ax.fill_between(t, perc_wide_l, perc_wide_u, facecolor=color, alpha=0.25)
+        perc_narrow_l = values[:, int(perc_narrow*n)]
+        perc_narrow_u = values[:, int((1-perc_narrow)*n)]
+        ax.fill_between(t, perc_narrow_l, perc_narrow_u, facecolor=color, alpha=0.4)
+    ax.plot(t, perc_50, color)
+    ax.grid(True)
+    ax.set_xlabel('time (d)')
+    ax.set_xlim(t[0], t[-1])
+    if ylabel is not None:
+        ax.set_ylabel(ylabel)
+    if title is not None:
+        ax.set_title(title)
+
+class HTMLGenerator(object):
+    def __init__(self, *models):
+        self.models = models
+
+    def initialize(self):
+        E_0s = []
+        E_0_ini = None
+        self.valid_models = []
+        for model in self.models:
+            model.initialize(E_0_ini)
+            if model.valid:
+                E_0s.append(model.E_0)
+                E_0_ini = numpy.mean(E_0s)
+                self.valid_models.append(model)
+
+    def generate(self, workdir, color='k', label='', t_end=None, figsize=(8, 5)):
+        import tempfile
+        from matplotlib import pyplot
+
+        # Collect results for all model instances
+        if t_end is None:
+            t_ends = numpy.sort([model.a_99 for model in self.valid_models])
+            t_end = t_ends[int(0.9*len(t_ends))]
+        t = numpy.linspace(0., t_end, 1000)
+        Ls = numpy.empty((t.shape[0], len(self.valid_models)))
+        Ss = numpy.empty((t.shape[0], len(self.valid_models)))
+        Rs = numpy.empty((t.shape[0], len(self.valid_models)))
+        for i, model in enumerate(self.valid_models):
+            dummy_t, Ls[:, i], Ss[:, i], Rs[:, i], M = model.simulate(t)
+
+        strings = []
+
+        fig = pyplot.figure(figsize=figsize)
+        params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'R_i'
+        for i, p in enumerate(params):
+            ax = fig.add_subplot(1, len(params), i+1)
+            values = [getattr(model, p) for model in self.valid_models]
+            values = numpy.ma.log10(values)
+            ax.boxplot(values, labels=(p,))
+        fig.tight_layout()
+        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
+        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
+        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+
+        fig = pyplot.figure(figsize=figsize)
+        ax = fig.gca()
+
+        ax.cla()
+        plot(ax, t, Ls, perc_wide=None, title='growth', ylabel='structural length (cm)', color=color)
+        fig.tight_layout()
+        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
+        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
+        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+
+        ax.cla()
+        plot(ax, t, Rs, perc_wide=None, title='reproduction', ylabel='reproduction rate (#/d)', color=color)
+        fig.tight_layout()
+        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
+        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
+        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+
+        ax.cla()
+        plot(ax, t, Ss, perc_wide=None, title='survival', ylabel='survival (-)', color=color)
+        ax.set_ylim(0., 1.)
+        fig.tight_layout()
+        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
+        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
+        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+
+        return '\n'.join(strings)
 
 #scipy.integrate.
 if __name__ == '__main__':
@@ -261,22 +508,24 @@ if __name__ == '__main__':
     import argparse
     import io
     parser = argparse.ArgumentParser()
+    parser.add_argument('--traits', default='traits.txt')
+    parser.add_argument('--c_T', type=float, default=1.)
     parser.add_argument('species')
     args = parser.parse_args()
-    with io.open('traits.txt', 'rU', encoding='utf-8') as f:
+    with io.open(args.traits, 'rU', encoding='utf-8') as f:
         labels = f.readline().rstrip('\n').split('\t')
         for l in f:
             items = l.rstrip('\n').split('\t')
-            if items[0] == args.species:
+            if items[0].lower() == args.species.lower():
                 par2value = {}
                 for name, item in zip(labels[2:], items[2:]):
                     if item != '':
                         par2value[name.split(' (')[0]] = float(item)
                 break
-    #   Dromaius novaehollandiae (Emu)
     print('Parameters for %s:' % args.species)
     for name, value in par2value.items():
         print('%s: %s' % (name, value))
         setattr(model, name, value)
-    t, result = model.simulate()
-    model.plotResult(t, result)
+    model.report(c_T=args.c_T)
+    result = model.simulate(c_T=args.c_T)
+    model.plotResult(*result)
