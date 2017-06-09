@@ -1,3 +1,4 @@
+import os
 import io
 import numpy
 from matplotlib import pyplot
@@ -6,6 +7,7 @@ import argparse
 path = 'traits.txt'
 parser = argparse.ArgumentParser()
 parser.add_argument('path')
+parser.add_argument('output_dir', nargs='?', default='distribution')
 args = parser.parse_args()
 
 trait2data = {}
@@ -22,6 +24,9 @@ with io.open(args.path, 'rU', encoding='utf-8') as f:
         for trait, value in zip(traits, items[2:]):
             if value != '':
                 trait2data.setdefault(trait, []).append(float(value))
+
+if not os.path.isdir(args.output_dir):
+    os.mkdir(args.output_dir)
 
 fig = pyplot.figure(figsize=(15, 6))
 ax_lin = fig.add_subplot(121)
@@ -42,7 +47,6 @@ for trait, values in trait2data.items():
         ax_log.set_xscale('log')
         ax_log.grid()
         ax_log.set_xlabel(trait2label[trait])
-    print 'saving %s...' % trait
-    fig.savefig('distribution %s.png' % trait, dpi=150)
-
-    
+    path = os.path.join(args.output_dir, '%s.png' % trait)
+    print 'saving %s...' % path
+    fig.savefig(path, dpi=150)
