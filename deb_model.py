@@ -83,7 +83,6 @@ class DEB_model(object):
         #s_j: reprod buffer/structure at pupation as fraction of max (-) - hex model
 
         # pars specific for this entry
-        self.f = 1.0 # functional response
         #del_M = L/Lw: shape coefficient (-)
 
         # derived parameters
@@ -109,12 +108,11 @@ class DEB_model(object):
         E_G = self.E_G
         E_Hb = self.E_Hb
         k_J = self.k_J
-        E_m = self.p_Am*self.f/self.v
+        E_m = self.p_Am/self.v # defined at f=1
         g = E_G/kap/E_m
         k_M = self.p_M/E_G
         L_m = kap*self.p_Am/self.p_M
         L_T = self.p_T/self.p_M
-        f = self.f
 
         assert E_m > 0
         assert L_m > 0
@@ -174,7 +172,7 @@ class DEB_model(object):
 
             t = 0.
             E_H = E_H_ini
-            L_i = (f*L_m - L_T)*s_M
+            L_i = (L_m - L_T)*s_M # f=1
             done = False
             while not done:
                 L = (L_i-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
@@ -187,7 +185,7 @@ class DEB_model(object):
                 t += delta_t
                 if t > t_max:
                     return None, None
-            L = (f*s_M*L_m-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
+            L = (L_i - L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
             return t_ini + t, L
 
         def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
@@ -256,7 +254,7 @@ class DEB_model(object):
         self.L_T = L_T
         self.E_m = E_m
 
-        self.r_B = self.p_M/3/(self.f*E_m*kap + E_G) # checked against p52
+        self.r_B = self.p_M/3/(E_m*kap + E_G) # checked against p52, note f=1
         L_i_min = self.L_m - self.L_T # not counting acceleration!
         if L_i_min < self.L_b:
             # shrinking directly after birth
@@ -297,7 +295,7 @@ class DEB_model(object):
         print('s_M [acceleration factor at f=1] = %s' % self.s_M)
         print('R_i [ultimate reproduction rate] = %s' % (self.R_i*c_T))
 
-    def simulate(self, t=None, c_T=1.):
+    def simulate(self, t=None, c_T=1., f=1.):
         if not self.initialized:
             self.initialize()
         if not self.valid:
@@ -311,7 +309,6 @@ class DEB_model(object):
         E_G = self.E_G
         E_Hb = self.E_Hb
         E_Hp = self.E_Hp
-        f = self.f
         s_G = self.s_G
         h_a = self.h_a*c_T*c_T
         E_0 = self.E_0
@@ -462,7 +459,7 @@ class HTMLGenerator(object):
         strings = []
 
         fig = pyplot.figure(figsize=figsize)
-        params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'R_i'
+        params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'L_i', 'R_i'
         for i, p in enumerate(params):
             ax = fig.add_subplot(1, len(params), i+1)
             values = numpy.array([getattr(model, p) for model in self.valid_models])
