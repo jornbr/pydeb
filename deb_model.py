@@ -102,6 +102,7 @@ class DEB_model(object):
         self.kap_R = max(min(self.kap_R, 1.), 0.)
         self.kap_X = max(min(self.kap_X, 1.), 0.)
         self.E_Hj = max(self.E_Hb, self.E_Hj)
+        self.E_Hp = max(self.E_Hb, self.E_Hp)
         self.initialized = True
         kap = self.kap
         v = self.v
@@ -167,6 +168,7 @@ class DEB_model(object):
             return t, E, L
 
         def find_maturity(L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
+            assert E_H_target >= E_H_ini
             exp = numpy.exp
             r_B = self.r_B
 
@@ -189,27 +191,33 @@ class DEB_model(object):
             return t_ini + t, L
 
         def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
+            assert E_H_target >= E_H_ini
             exp = numpy.exp
             V_b = L_ini**3
 
             # dL = (E*v*L/L_b-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
             #    = (E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa) * L
-            r = (kap*v/L_ini*E_m - self.p_M - self.p_T)/(E_G+kap*E_m) # specific growth of structural VOLUME
-            prefactor = V_b*E_m*(v*E_G/L_ini + self.p_M + self.p_T/L_ini)/(E_G + kap*E_m)
+            r = (kap*v/L_ini*E_m - self.p_M - self.p_T)/(E_G + kap*E_m) # specific growth rate of structural VOLUME
+            prefactor = (1. - kap)*V_b*E_m*(v*E_G/L_ini + self.p_M + self.p_T/L_ini)/(E_G + kap*E_m)
 
-            t = 0.
-            E_H = self.E_Hb
-            done = False
-            while not done:
-                p_C = prefactor*exp(r*t)
-                dE_H = (1. - kap)*p_C - k_J*E_H
-                if E_H + delta_t * dE_H > E_H_target:
-                    delta_t = (E_H_target - E_H)/dE_H
-                    done = True
-                E_H += dE_H*delta_t
-                t += delta_t
-                if t > t_max:
-                    return None, None
+            if True:
+                t = 0.
+                E_H = self.E_Hb
+                done = False
+                while not done:
+                    dE_H = prefactor*exp(r*t) - k_J*E_H
+                    if E_H + delta_t * dE_H > E_H_target:
+                        delta_t = (E_H_target - E_H)/dE_H
+                        done = True
+                    E_H += dE_H*delta_t
+                    t += delta_t
+                    if t > t_max:
+                        return None, None
+            else:
+                # analytical solution E_H(t):
+                C = E_H_ini/prefactor - 1./(k_J+r)
+                t = scipy.optimize.minimize_scalar(lambda t: (E_H_target-prefactor*(exp(r*t)/(k_J+r) + C*exp(-k_J*t)))**2, (t_ini, 10*t_ini)).x
+
             L = L_ini*exp(r/3*t)
             return t_ini + t, L
 
@@ -259,7 +267,12 @@ class DEB_model(object):
             return
         self.s_M = self.L_j/self.L_b
         self.L_i = (self.L_m - self.L_T)*self.s_M
-        self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_ini=self.a_j, t_max=a_99_max*100)
+        if self.E_Hp >= self.E_Hj:
+            # puberty after metamorphosis
+            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_max=a_99_max*100, t_ini=self.a_j)
+        else:
+            # puberty before metamorphosis
+            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=max(0.01, self.a_b/100), t_max=a_99_max*100, t_ini=self.a_b)
         if self.a_p is None:
             return
         self.a_99 = self.a_p - numpy.log(1 - (0.99*self.L_i - self.L_p)/(self.L_i - self.L_p))/self.r_B
@@ -352,29 +365,17 @@ class DEB_model(object):
 
             return numpy.array((dE, dL, dE_H, dE_R, dQ, dH, dS, dcumR, dcumt), dtype=float), dE_R/E_0
 
-        if False:
-            import scipy.integrate
-            y0 = numpy.array((E_0, 0., 0., 0., 0., 1., 0.))
-            it_b = t.searchsorted(self.a_b)
-            t_embryo = t[:it_b]
-            t_adult = t[it_b:]
-            result = scipy.integrate.odeint(dy_embryo, y0, t_embryo)
-            L = (f*L_m-self.L_b)*(1 - numpy.exp(-self.r_B*(t_adult - self.a_b))) + self.L_b # p 52
-            result2 = numpy.zeros((L.shape[0], result.shape[1]))
-            result2[:, 1] = L
-            return t, result[:, 1], result[:, -1]
-        else:
-            y0 = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
-            result = numpy.empty((t.size, y0.size))
-            allR = numpy.empty((t.size,))
-            result[0, :] = y0
-            yold = y0
-            for it, curt in enumerate(t[1:]):
-                derivative, R = dy(yold, curt)
-                yold = yold + dt*derivative
-                result[it+1, :] = yold
-                allR[it+1] = R
-            return t, result[:, 1], result[:, 6], allR, result[:, 2]
+        y0 = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
+        result = numpy.empty((t.size, y0.size))
+        allR = numpy.empty((t.size,))
+        result[0, :] = y0
+        yold = y0
+        for it, curt in enumerate(t[1:]):
+            derivative, R = dy(yold, curt)
+            yold = yold + dt*derivative
+            result[it+1, :] = yold
+            allR[it+1] = R
+        return t, result[:, 1], result[:, 6], allR, result[:, 2]
 
     def plotResult(self, t, L, S, R, M):
         from matplotlib import pyplot
@@ -447,13 +448,14 @@ class HTMLGenerator(object):
         from matplotlib import pyplot
 
         # Collect results for all model instances
+        n = len(self.valid_models)
         if t_end is None:
-            t_ends = numpy.sort([model.a_99 for model in self.valid_models])
-            t_end = t_ends[int(0.9*len(t_ends))]
-        t = numpy.linspace(0., t_end, 1000)
-        Ls = numpy.empty((t.shape[0], len(self.valid_models)))
-        Ss = numpy.empty((t.shape[0], len(self.valid_models)))
-        Rs = numpy.empty((t.shape[0], len(self.valid_models)))
+            t_end = numpy.sort([model.a_99 for model in self.valid_models])[int(0.9*n)]
+            t_b_10 = numpy.sort([model.a_b for model in self.valid_models])[int(0.1*n)]
+        t = numpy.linspace(0., t_end, max(1000, int(2*t_end/t_b_10)))
+        Ls = numpy.empty((t.shape[0], n))
+        Ss = numpy.empty((t.shape[0], n))
+        Rs = numpy.empty((t.shape[0], n))
         for i, model in enumerate(self.valid_models):
             dummy_t, Ls[:, i], Ss[:, i], Rs[:, i], M = model.simulate(t)
 
@@ -463,9 +465,9 @@ class HTMLGenerator(object):
         params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'R_i'
         for i, p in enumerate(params):
             ax = fig.add_subplot(1, len(params), i+1)
-            values = [getattr(model, p) for model in self.valid_models]
-            values = numpy.ma.log10(values)
-            ax.boxplot(values, labels=(p,))
+            values = numpy.array([getattr(model, p) for model in self.valid_models])
+            ax.boxplot(values, labels=(p,), whis=(10, 90))
+            ax.set_yscale('log')
         fig.tight_layout()
         handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
         fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
