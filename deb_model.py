@@ -20,6 +20,7 @@ class DEB_model(object):
         self.s_G = None #Gompertz stress coefficient
         self.kap_R = None # reproductive efficiency
         self.kap_X = None # ???
+        self.p_T = 0.
 
         # stf
         # foetal development (rather than egg development)
@@ -105,13 +106,13 @@ class DEB_model(object):
         kap = self.kap
         v = self.v
         E_G = self.E_G
-        p_S = self.p_M
         E_Hb = self.E_Hb
         k_J = self.k_J
         E_m = self.p_Am*self.f/self.v
         g = E_G/kap/E_m
         k_M = self.p_M/E_G
         L_m = kap*self.p_Am/self.p_M
+        L_T = self.p_T/self.p_M
         f = self.f
 
         assert E_m > 0
@@ -120,7 +121,9 @@ class DEB_model(object):
         #assert self.s_G > 0
 
         E_G_per_kappa = E_G/kap
-        p_S_per_kappa = p_S/kap
+        p_M_per_kappa = self.p_M/kap
+        p_T_per_kappa = self.p_T/kap
+        v_E_G_plus_P_T_per_kappa = (v*E_G + self.p_T)/kap
         one_minus_kappa = 1-kap
 
         def error_in_E(p, delta_t):
@@ -144,8 +147,8 @@ class DEB_model(object):
                 #dL = (E*v-p_S/kappa*L)/3/(E+E_G/kappa)
                 L2 = L*L
                 L3 = L*L2
-                p_C = E*(v*L2*E_G_per_kappa + p_S_per_kappa*L3)/(E + E_G_per_kappa*L3)
-                dL = (E*v-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
+                p_C = E*(v_E_G_plus_P_T_per_kappa*L2 + p_M_per_kappa*L3)/(E + E_G_per_kappa*L3)
+                dL = (E*v-(p_M_per_kappa*L+p_T_per_kappa)*L3)/3/(E+E_G_per_kappa*L3)
                 dE = -p_C
                 dE_H = one_minus_kappa*p_C - k_J*E_H
                 if E_H + delta_t * dE_H > E_Hb:
@@ -175,10 +178,11 @@ class DEB_model(object):
                 L_ini = self.L_b
             t = 0.
             E_H = E_H_ini
+            L_i = (f*L_m - L_T)*s_M
             done = False
             while not done:
-                L = (f*s_M*L_m-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
-                p_C = L*L*L*E_m*(v*E_G_per_kappa/L*s_M + p_S_per_kappa)/(E_m + E_G_per_kappa)
+                L = (L_i-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
+                p_C = L*L*E_m*((v*E_G_per_kappa + p_T_per_kappa)*s_M + p_M_per_kappa*L)/(E_m + E_G_per_kappa)
                 dE_H = (1. - kap)*p_C - k_J*E_H
                 if E_H + delta_t * dE_H > E_H_target:
                     delta_t = (E_H_target - E_H)/dE_H
@@ -197,8 +201,8 @@ class DEB_model(object):
 
             # dL = (E*v*L/L_b-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
             #    = (E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa) * L
-            r = 3*(E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa)
-            prefactor = V_b*E_m*(v*E_G_per_kappa/L_b + p_S_per_kappa)/(E_m + E_G_per_kappa)
+            r = (kap*v/L_b*E_m - self.p_M - self.p_T)/(E_G+kap*E_m) # specific growth of structural VOLUME
+            prefactor = V_b*E_m*(v*E_G/L_b + self.p_M + self.p_T/L_b)/(E_G + kap*E_m)
 
             t = 0.
             E_H = self.E_Hb
@@ -246,19 +250,27 @@ class DEB_model(object):
         if birth_state is None:
             return
         self.a_b, Em, self.L_b = birth_state
-        self.r_B = p_S/3/(self.f*E_m*kap + E_G) # checked against p52, but note p_S -> p_M
-        self.a_99 = self.a_b - numpy.log(1 - (0.99*self.f*L_m - self.L_b)/(self.f*L_m - self.L_b))/self.r_B
-        self.E_m = E_m
+
         self.L_m = L_m
-        self.a_j, self.L_j = find_maturity_v1(self.E_Hj, delta_t=self.a_b/100, t_max=self.a_99*100)
+        self.L_T = L_T
+        self.E_m = E_m
+
+        self.r_B = self.p_M/3/(self.f*E_m*kap + E_G) # checked against p52
+        L_i_min = self.L_m - self.L_T # not counting acceleration!
+        if L_i_min < self.L_b:
+            # shrinking directly after birth
+            return
+        a_99_max = self.a_b - numpy.log(1 - (0.99*L_i_min - self.L_b)/(L_i_min - self.L_b))/self.r_B
+        self.a_j, self.L_j = find_maturity_v1(self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=a_99_max*100)
         if self.a_j is None:
             return
         self.s_M = self.L_j/self.L_b
-        self.L_i = self.L_m*self.s_M
-        self.a_p, self.L_p = find_maturity(self.E_Hp, delta_t=self.a_b/100, s_M=self.s_M, t_ini=self.a_j, E_H_ini=self.E_Hj, L_ini=self.L_j, t_max=self.a_99*100)
+        self.L_i = (self.L_m - self.L_T)*self.s_M
+        self.a_p, self.L_p = find_maturity(self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_ini=self.a_j, E_H_ini=self.E_Hj, L_ini=self.L_j, t_max=a_99_max*100)
         if self.a_p is None:
             return
-        p_C_i = self.L_i**3 * E_m * (v*E_G_per_kappa*self.s_M/self.L_i + p_S_per_kappa)/(E_m + E_G_per_kappa)
+        self.a_99 = self.a_p - numpy.log(1 - (0.99*self.L_i - self.L_p)/(self.L_i - self.L_p))/self.r_B
+        p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kappa + p_T_per_kappa)*self.s_M + p_M_per_kappa*self.L_i)/(E_m + E_G_per_kappa)
         self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
         self.valid = True
 
@@ -272,7 +284,10 @@ class DEB_model(object):
         print('a_p [age at puberty] = %s' % (self.a_p/c_T))
         print('a_99 [age at L = 0.99 L_m] = %s' % (self.a_99/c_T))
         print('[E_m] [reserve capacity] = %s' % self.E_m)
-        print('L_i [ultimate length - still incl heating length!] = %s' % self.L_i)
+        print('L_b [structural length at birth] = %s' % self.L_b)
+        print('L_b [structural length at metamorphosis] = %s' % self.L_j)
+        print('L_p [structural length at puberty] = %s' % self.L_p)
+        print('L_i [ultimate structural length] = %s' % self.L_i)
         print('s_M [acceleration factor at f=1] = %s' % self.s_M)
         print('R_i [ultimate reproduction rate] = %s' % (self.R_i*c_T))
 
@@ -286,6 +301,7 @@ class DEB_model(object):
         k_J = self.k_J*c_T
         p_Am = self.p_Am*c_T
         p_M = self.p_M*c_T
+        p_T = self.p_T*c_T
         E_G = self.E_G
         E_Hb = self.E_Hb
         E_Hp = self.E_Hp
@@ -297,31 +313,18 @@ class DEB_model(object):
         s_M = self.s_M
         L_b = self.L_b
 
-        p_S = p_M
         E_m = p_Am/v
         L_m = kap*p_Am/p_M
         L_m3 = L_m**3
         E_G_per_kappa = E_G/kap
-        p_S_per_kappa = p_S/kap
+        p_M_per_kappa = p_M/kap
+        p_T_per_kappa = p_T/kap
+        v_E_G_plus_P_T_per_kappa = (v*E_G + p_T)/kap
         one_minus_kappa = 1-kap
 
         if t is None:
             t = numpy.linspace(0., self.a_99/c_T, 1000)
         dt = t[1] - t[0]
-
-        def dy_embryo(y, t0):
-            E, L, E_H, Q, H, S, cumt = map(float, y)
-            L2 = L*L
-            L3 = L*L2
-            p_C = E*(v*L2*E_G_per_kappa + p_S_per_kappa*L3)/(E + E_G_per_kappa*L3)
-            dL = (E*v-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
-            dE = -p_C
-            dE_H = one_minus_kappa*p_C - k_J*E_H
-            dH = Q
-            dQ = (Q/L_m3*s_G + h_a)*p_C/E_m
-            dS = 0. if L3 == 0 else -H/L3*S
-            dcumt = S
-            return numpy.array((dE, dL, dE_H, dQ, dH, dS, dcumt))
 
         def dy(y, t0):
             E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
@@ -331,13 +334,13 @@ class DEB_model(object):
             #s = 1.
 
             # Energy fluxes in J/d
-            p_C = E*(v*L2*E_G_per_kappa*s + p_S_per_kappa*L3)/(E + E_G_per_kappa*L3)
+            p_C = E*(v_E_G_plus_P_T_per_kappa*s*L2 + p_M_per_kappa*L3)/(E + E_G_per_kappa*L3)
             p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
             p_R = one_minus_kappa*p_C - k_J*E_H # J/d
 
             # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
             dE = p_A - p_C
-            dL = (E*v*s-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
+            dL = (E*v*s-(p_M_per_kappa*L+p_T_per_kappa*s)*L3)/3/(E+E_G_per_kappa*L3)
             if E_H < E_Hp:
                 dE_H = p_R
                 dE_R = 0.
