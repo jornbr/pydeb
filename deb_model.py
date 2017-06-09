@@ -166,16 +166,10 @@ class DEB_model(object):
                     return
             return t, E, L
 
-        def find_maturity(E_H_target, delta_t=1., s_M=1., t_ini=None, E_H_ini=None, L_ini=None, t_max=numpy.inf):
+        def find_maturity(L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
             exp = numpy.exp
             r_B = self.r_B
 
-            if t_ini is None:
-                t_ini = self.a_b
-            if E_H_ini is None:
-                E_H_ini = self.E_Hb
-            if L_ini is None:
-                L_ini = self.L_b
             t = 0.
             E_H = E_H_ini
             L_i = (f*L_m - L_T)*s_M
@@ -192,17 +186,16 @@ class DEB_model(object):
                 if t > t_max:
                     return None, None
             L = (f*s_M*L_m-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
-            return t + t_ini, L
+            return t_ini + t, L
 
-        def find_maturity_v1(E_H_target, delta_t=1., t_max=numpy.inf):
+        def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
             exp = numpy.exp
-            L_b = self.L_b
-            V_b = L_b**3
+            V_b = L_ini**3
 
             # dL = (E*v*L/L_b-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
             #    = (E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa) * L
-            r = (kap*v/L_b*E_m - self.p_M - self.p_T)/(E_G+kap*E_m) # specific growth of structural VOLUME
-            prefactor = V_b*E_m*(v*E_G/L_b + self.p_M + self.p_T/L_b)/(E_G + kap*E_m)
+            r = (kap*v/L_ini*E_m - self.p_M - self.p_T)/(E_G+kap*E_m) # specific growth of structural VOLUME
+            prefactor = V_b*E_m*(v*E_G/L_ini + self.p_M + self.p_T/L_ini)/(E_G + kap*E_m)
 
             t = 0.
             E_H = self.E_Hb
@@ -217,8 +210,8 @@ class DEB_model(object):
                 t += delta_t
                 if t > t_max:
                     return None, None
-            L = L_b*exp(r/3*t)
-            return t + self.a_b, L
+            L = L_ini*exp(r/3*t)
+            return t_ini + t, L
 
         import scipy.optimize
         if E_0_ini is None:
@@ -261,12 +254,12 @@ class DEB_model(object):
             # shrinking directly after birth
             return
         a_99_max = self.a_b - numpy.log(1 - (0.99*L_i_min - self.L_b)/(L_i_min - self.L_b))/self.r_B
-        self.a_j, self.L_j = find_maturity_v1(self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=a_99_max*100)
+        self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=a_99_max*100, t_ini=self.a_b)
         if self.a_j is None:
             return
         self.s_M = self.L_j/self.L_b
         self.L_i = (self.L_m - self.L_T)*self.s_M
-        self.a_p, self.L_p = find_maturity(self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_ini=self.a_j, E_H_ini=self.E_Hj, L_ini=self.L_j, t_max=a_99_max*100)
+        self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_ini=self.a_j, t_max=a_99_max*100)
         if self.a_p is None:
             return
         self.a_99 = self.a_p - numpy.log(1 - (0.99*self.L_i - self.L_p)/(self.L_i - self.L_p))/self.r_B
