@@ -441,8 +441,8 @@ class HTMLGenerator(object):
                 self.valid_models.append(model)
 
     def generate(self, workdir, color='k', label='', t_end=None, figsize=(8, 5)):
-        import tempfile
         from matplotlib import pyplot
+        relworkdir = os.path.relpath(workdir)
 
         # Collect results for all model instances
         n = len(self.valid_models)
@@ -466,9 +466,8 @@ class HTMLGenerator(object):
             ax.boxplot(values, labels=(p,), whis=(10, 90))
             ax.set_yscale('log')
         fig.tight_layout()
-        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
-        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
-        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+        fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=72)
+        strings.append('<img src="%s/boxplots.png"/><br>' % relworkdir)
 
         fig = pyplot.figure(figsize=figsize)
         ax = fig.gca()
@@ -476,24 +475,21 @@ class HTMLGenerator(object):
         ax.cla()
         plot(ax, t, Ls, perc_wide=None, title='growth', ylabel='structural length (cm)', color=color)
         fig.tight_layout()
-        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
-        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
-        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+        fig.savefig(os.path.join(workdir, 'tL.png'), dpi=72)
+        strings.append('<img src="%s/tL.png"/><br>' % relworkdir)
 
         ax.cla()
         plot(ax, t, Rs, perc_wide=None, title='reproduction', ylabel='reproduction rate (#/d)', color=color)
         fig.tight_layout()
-        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
-        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
-        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+        fig.savefig(os.path.join(workdir, 'tR.png'), dpi=72)
+        strings.append('<img src="%s/tR.png"/><br>' % relworkdir)
 
         ax.cla()
         plot(ax, t, Ss, perc_wide=None, title='survival', ylabel='survival (-)', color=color)
         ax.set_ylim(0., 1.)
         fig.tight_layout()
-        handle, name = tempfile.mkstemp(suffix='.png', dir=workdir)
-        fig.savefig(os.fdopen(handle, 'wb'), dpi=72)
-        strings.append('<img src="work/%s"/><br>' % os.path.basename(name))
+        fig.savefig(os.path.join(workdir, 'tS.png'), dpi=72)
+        strings.append('<img src="%s/tS.png"/><br>' % relworkdir)
 
         return '\n'.join(strings)
 
