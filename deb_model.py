@@ -1,8 +1,16 @@
 from __future__ import print_function
 
 import os
-
+import math
 import numpy
+try:
+    import pyximport
+    pyximport.install(setup_args={'include_dirs': numpy.get_include()})
+    import deb_model_eq
+except ImportError, e:
+    print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
+    deb_model_eq = None
+
 import scipy.integrate
 
 class DEB_model(object):
@@ -95,8 +103,10 @@ class DEB_model(object):
 
         self.initialized = False
         self.valid = False
+        self.cmodel = None
 
-    def initialize(self, E_0_ini=None):
+    def initialize(self, E_0_ini=None, verbose=False):
+        self.valid = False
         self.kap = max(min(self.kap, 1.), 0.)
         self.kap_R = max(min(self.kap_R, 1.), 0.)
         self.kap_X = max(min(self.kap_X, 1.), 0.)
@@ -113,16 +123,18 @@ class DEB_model(object):
         k_M = self.p_M/E_G
         L_m = kap*self.p_Am/self.p_M
         L_T = self.p_T/self.p_M
+        p_M = self.p_M
+        p_T = self.p_T
 
         assert E_m > 0
         assert L_m > 0
         assert self.h_a > 0
         #assert self.s_G > 0
 
-        E_G_per_kappa = E_G/kap
-        p_M_per_kappa = self.p_M/kap
-        p_T_per_kappa = self.p_T/kap
-        v_E_G_plus_P_T_per_kappa = (v*E_G + self.p_T)/kap
+        E_G_per_kap = E_G/kap
+        p_M_per_kap = p_M/kap
+        p_T_per_kap = p_T/kap
+        v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kappa = 1-kap
 
         def error_in_E(p, delta_t):
@@ -141,13 +153,11 @@ class DEB_model(object):
             t, E, L, E_H = 0., float(E_0), 0., 0.
             done = False
             while not done:
-                #p_C = (v/L*E_G + p_S)/(kappa*E + E_G)
-                #dE_H = (1-kappa)*p_C - k_J*E_H
-                #dL = (E*v-p_S/kappa*L)/3/(E+E_G/kappa)
                 L2 = L*L
                 L3 = L*L2
-                p_C = E*(v_E_G_plus_P_T_per_kappa*L2 + p_M_per_kappa*L3)/(E + E_G_per_kappa*L3)
-                dL = (E*v-(p_M_per_kappa*L+p_T_per_kappa)*L3)/3/(E+E_G_per_kappa*L3)
+                denom = E + E_G_per_kap*L3
+                p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
+                dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
                 dE = -p_C
                 dE_H = one_minus_kappa*p_C - k_J*E_H
                 if E_H + delta_t * dE_H > E_Hb:
@@ -157,17 +167,13 @@ class DEB_model(object):
                 L += delta_t * dL
                 E_H += delta_t * dE_H
                 t += delta_t
-                if E < 0:
-                    #print('E_0 = %.3e J: reserve is negative' % E_0)
-                    return
-                if dL < 0:
-                    #print('E_0 = %.3e J: shrinking' % E_0)
+                if E < 0 or dL < 0:
                     return
             return t, E, L
 
         def find_maturity(L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
             assert E_H_target >= E_H_ini
-            exp = numpy.exp
+            exp = math.exp
             r_B = self.r_B
 
             t = 0.
@@ -176,7 +182,7 @@ class DEB_model(object):
             done = False
             while not done:
                 L = (L_i-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
-                p_C = L*L*E_m*((v*E_G_per_kappa + p_T_per_kappa)*s_M + p_M_per_kappa*L)/(E_m + E_G_per_kappa)
+                p_C = L*L*E_m*((v*E_G_per_kap + p_T_per_kap)*s_M + p_M_per_kap*L)/(E_m + E_G_per_kap)
                 dE_H = (1. - kap)*p_C - k_J*E_H
                 if E_H + delta_t * dE_H > E_H_target:
                     delta_t = (E_H_target - E_H)/dE_H
@@ -190,7 +196,7 @@ class DEB_model(object):
 
         def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
             assert E_H_target >= E_H_ini
-            exp = numpy.exp
+            exp = math.exp
             V_b = L_ini**3
 
             # dL = (E*v*L/L_b-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
@@ -219,6 +225,24 @@ class DEB_model(object):
             L = L_ini*exp(r/3*t)
             return t_ini + t, L
 
+        if deb_model_eq is not None:
+            self.cmodel = deb_model_eq.Model()
+            self.cmodel.v = self.v
+            self.cmodel.p_Am = self.p_Am
+            self.cmodel.p_M = self.p_M
+            self.cmodel.p_T = self.p_T
+            self.cmodel.E_G = self.E_G
+            self.cmodel.kap = self.kap
+            self.cmodel.k_J = self.k_J
+            self.cmodel.E_Hb = self.E_Hb
+            self.cmodel.E_Hp = self.E_Hp
+            self.cmodel.kap_R = self.kap_R
+            self.cmodel.h_a = self.h_a
+            self.cmodel.s_G = self.s_G
+            get_birth_state = self.cmodel.get_birth_state
+            find_maturity = self.cmodel.find_maturity
+            find_maturity_v1 = self.cmodel.find_maturity_v1
+
         import scipy.optimize
         if E_0_ini is None:
             E_0_ini = max(E_Hb, E_G*L_m**3)
@@ -227,8 +251,12 @@ class DEB_model(object):
                 break
             E_0_ini *= 10
         else:
+            if verbose:
+                print('Cannot find valid initial estimate for E_0 (tried up to %s)' % E_0_ini)
             return
 
+        if verbose:
+            print('Determining cost of an egg and state at birth...')
         p = numpy.log10(E_0_ini),
         bracket = (p[0], p[0]+1)
         initial_simplex = None
@@ -247,6 +275,8 @@ class DEB_model(object):
         self.E_0 = E_0
         birth_state = get_birth_state(E_0, delta_t=0.01)
         if birth_state is None:
+            if verbose:
+                print('Unable to determine cost of an egg (E_0).')
             return
         self.a_b, Em, self.L_b = birth_state
 
@@ -258,48 +288,73 @@ class DEB_model(object):
         L_i_min = self.L_m - self.L_T # not counting acceleration!
         if L_i_min < self.L_b:
             # shrinking directly after birth
+            if verbose:
+                print('Shrinking directly after birth (L_i_min < L_b).')
             return
         a_99_max = self.a_b - numpy.log(1 - (0.99*L_i_min - self.L_b)/(L_i_min - self.L_b))/self.r_B
-        self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=a_99_max*100, t_ini=self.a_b)
+        if self.cmodel is not None:
+            self.cmodel.E_0 = self.E_0
+            self.cmodel.L_b = self.L_b
+            self.cmodel.r_B = self.r_B
+            self.cmodel.L_m = self.L_m
+            self.cmodel.L_T = self.L_T
+        if verbose:
+            print('Determining age and length at metamorphosis...')
+        self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
         if self.a_j is None:
+            if verbose:
+                print('Cannot determine age and length at metamorphosis.')
             return
         self.s_M = self.L_j/self.L_b
+        if self.cmodel is not None:
+            self.cmodel.s_M = self.s_M
         self.L_i = (self.L_m - self.L_T)*self.s_M
+        if verbose:
+            print('Determining age and length at puberty...')
         if self.E_Hp >= self.E_Hj:
             # puberty after metamorphosis
-            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_max=a_99_max*100, t_ini=self.a_j)
+            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_j)
         else:
             # puberty before metamorphosis
-            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=max(0.01, self.a_b/100), t_max=a_99_max*100, t_ini=self.a_b)
+            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
         if self.a_p is None:
+            if verbose:
+                print('Cannot determine age and length at puberty.')
             return
         self.a_99 = self.a_p - numpy.log(1 - (0.99*self.L_i - self.L_p)/(self.L_i - self.L_p))/self.r_B
-        p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kappa + p_T_per_kappa)*self.s_M + p_M_per_kappa*self.L_i)/(E_m + E_G_per_kappa)
+        p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kap + p_T_per_kap)*self.s_M + p_M_per_kap*self.L_i)/(E_m + E_G_per_kap)
         self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
         self.valid = True
 
     def report(self, c_T=1.):
         if not self.initialized:
             self.initialize()
-        print('E_0 [cost of an egg] = %s' % self.E_0)
-        print('r_B [von Bertalanffy growth rate] = %s' % (c_T*self.r_B))
-        print('a_b [age at birth] = %s' % (self.a_b/c_T))
-        print('a_j [age at metamorphosis] = %s' % (self.a_j/c_T))
-        print('a_p [age at puberty] = %s' % (self.a_p/c_T))
-        print('a_99 [age at L = 0.99 L_m] = %s' % (self.a_99/c_T))
-        print('[E_m] [reserve capacity] = %s' % self.E_m)
-        print('L_b [structural length at birth] = %s' % self.L_b)
-        print('L_b [structural length at metamorphosis] = %s' % self.L_j)
-        print('L_p [structural length at puberty] = %s' % self.L_p)
-        print('L_i [ultimate structural length] = %s' % self.L_i)
-        print('s_M [acceleration factor at f=1] = %s' % self.s_M)
-        print('R_i [ultimate reproduction rate] = %s' % (self.R_i*c_T))
+        print('E_0 [cost of an egg]: %s' % self.E_0)
+        print('r_B [von Bertalanffy growth rate]: %s' % (c_T*self.r_B))
+        print('a_b [age at birth]: %s' % (self.a_b/c_T))
+        print('a_j [age at metamorphosis]: %s' % (self.a_j/c_T))
+        print('a_p [age at puberty]: %s' % (self.a_p/c_T))
+        print('a_99 [age at L = 0.99 L_m]: %s' % (self.a_99/c_T))
+        print('[E_m] [reserve capacity]: %s' % self.E_m)
+        print('L_b [structural length at birth]: %s' % self.L_b)
+        print('L_j [structural length at metamorphosis]: %s' % self.L_j)
+        print('L_p [structural length at puberty]: %s' % self.L_p)
+        print('L_i [ultimate structural length]: %s' % self.L_i)
+        print('s_M [acceleration factor at f=1]: %s' % self.s_M)
+        print('R_i [ultimate reproduction rate]: %s' % (self.R_i*c_T))
 
     def simulate(self, t=None, c_T=1., f=1.):
         if not self.initialized:
             self.initialize()
         if not self.valid:
-            return None, None
+            return
+        if t is None:
+            t = numpy.linspace(0., self.a_99/c_T, 1000)
+        dt = t[1] - t[0]
+        if self.cmodel is not None:
+            result = self.cmodel.integrate(len(t)-1, dt)
+            return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
+
         kap = self.kap
         v = self.v*c_T
         k_J = self.k_J*c_T
@@ -319,15 +374,11 @@ class DEB_model(object):
         E_m = p_Am/v
         L_m = kap*p_Am/p_M
         L_m3 = L_m**3
-        E_G_per_kappa = E_G/kap
-        p_M_per_kappa = p_M/kap
-        p_T_per_kappa = p_T/kap
-        v_E_G_plus_P_T_per_kappa = (v*E_G + p_T)/kap
-        one_minus_kappa = 1-kap
-
-        if t is None:
-            t = numpy.linspace(0., self.a_99/c_T, 1000)
-        dt = t[1] - t[0]
+        E_G_per_kap = E_G/kap
+        p_M_per_kap = p_M/kap
+        p_T_per_kap = p_T/kap
+        v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
+        one_minus_kap = 1-kap
 
         def dy(y, t0):
             E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
@@ -337,13 +388,13 @@ class DEB_model(object):
             #s = 1.
 
             # Energy fluxes in J/d
-            p_C = E*(v_E_G_plus_P_T_per_kappa*s*L2 + p_M_per_kappa*L3)/(E + E_G_per_kappa*L3)
+            p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/(E + E_G_per_kap*L3)
             p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
-            p_R = one_minus_kappa*p_C - k_J*E_H # J/d
+            p_R = one_minus_kap*p_C - k_J*E_H # J/d
 
             # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
             dE = p_A - p_C
-            dL = (E*v*s-(p_M_per_kappa*L+p_T_per_kappa*s)*L3)/3/(E+E_G_per_kappa*L3)
+            dL = (E*v*s-(p_M_per_kap*L+p_T_per_kap*s)*L3)/3/(E+E_G_per_kap*L3)
             if E_H < E_Hp:
                 dE_H = p_R
                 dE_R = 0.
@@ -372,14 +423,14 @@ class DEB_model(object):
             yold = yold + dt*derivative
             result[it+1, :] = yold
             allR[it+1] = R
-        return t, result[:, 1], result[:, 6], allR, result[:, 2]
+        return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': allR}
 
-    def plotResult(self, t, L, S, R, M):
+    def plotResult(self, t, L, S, R, E_H, **kwargs):
         from matplotlib import pyplot
         fig = pyplot.figure()
         ax = fig.add_subplot(411)
-        ijuv = M.searchsorted(self.E_Hb)
-        ipub = M.searchsorted(self.E_Hp)
+        ijuv = E_H.searchsorted(self.E_Hb)
+        ipub = E_H.searchsorted(self.E_Hp)
         ax.plot(t[:ijuv], L[:ijuv], '-g')
         ax.plot(t[ijuv:ipub], L[ijuv:ipub], '-b')
         ax.plot(t[ipub:], L[ipub:], '-r')
@@ -389,7 +440,7 @@ class DEB_model(object):
 
         ax = fig.add_subplot(412)
         ax.set_title('maturity')
-        ax.plot(t, M, '-b')
+        ax.plot(t, E_H, '-b')
         ax.grid()
 
         ax = fig.add_subplot(413)
@@ -454,7 +505,10 @@ class HTMLGenerator(object):
         Ss = numpy.empty((t.shape[0], n))
         Rs = numpy.empty((t.shape[0], n))
         for i, model in enumerate(self.valid_models):
-            dummy_t, Ls[:, i], Ss[:, i], Rs[:, i], M = model.simulate(t)
+            result = model.simulate(t)
+            Ls[:, i] = result['L']
+            Ss[:, i] = result['S']
+            Rs[:, i] = result['R']
 
         strings = []
 
@@ -519,4 +573,4 @@ if __name__ == '__main__':
         setattr(model, name, value)
     model.report(c_T=args.c_T)
     result = model.simulate(c_T=args.c_T)
-    model.plotResult(*result)
+    model.plotResult(**result)
