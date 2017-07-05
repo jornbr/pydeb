@@ -126,9 +126,9 @@ class DEB_model(object):
         p_M = self.p_M
         p_T = self.p_T
 
-        assert E_m > 0
-        assert L_m > 0
-        assert self.h_a > 0
+        assert E_m >= 0
+        assert L_m >= 0
+        assert self.h_a >= 0
         #assert self.s_G > 0
 
         E_G_per_kap = E_G/kap
@@ -235,6 +235,7 @@ class DEB_model(object):
             self.cmodel.kap = self.kap
             self.cmodel.k_J = self.k_J
             self.cmodel.E_Hb = self.E_Hb
+            self.cmodel.E_Hj = self.E_Hj
             self.cmodel.E_Hp = self.E_Hp
             self.cmodel.kap_R = self.kap_R
             self.cmodel.h_a = self.h_a
@@ -343,16 +344,14 @@ class DEB_model(object):
         print('s_M [acceleration factor at f=1]: %s' % self.s_M)
         print('R_i [ultimate reproduction rate]: %s' % (self.R_i*c_T))
 
-    def simulate(self, t=None, c_T=1., f=1.):
+    def simulate(self, n, delta_t, nsave=1, c_T=1., f=1.):
         if not self.initialized:
             self.initialize()
         if not self.valid:
             return
-        if t is None:
-            t = numpy.linspace(0., self.a_99/c_T, 1000)
-        dt = t[1] - t[0]
+        t = numpy.linspace(0., n*delta_t, int(n/nsave)+1)
         if self.cmodel is not None:
-            result = self.cmodel.integrate(len(t)-1, dt)
+            result = self.cmodel.integrate(n, delta_t, nsave=nsave)
             return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
 
         kap = self.kap
@@ -405,7 +404,7 @@ class DEB_model(object):
             # Damage-inducing compounds, damage, survival (0-1) - p 216
             dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
             dH = Q
-            dS = 0. if L3 <= 0. or S<1e-16 else -min(1./(dt+1e-8), H/L3)*S
+            dS = 0. if L3 <= 0. or S < 1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
 
             # Cumulative reproduction (#) and life span (d)
             dcumR = S*dE_R/E_0
@@ -416,18 +415,22 @@ class DEB_model(object):
         y0 = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
         result = numpy.empty((t.size, y0.size))
         allR = numpy.empty((t.size,))
-        result[0, :] = y0
-        yold = y0
-        for it, curt in enumerate(t[1:]):
-            derivative, R = dy(yold, curt)
-            yold = yold + dt*derivative
-            result[it+1, :] = yold
-            allR[it+1] = R
+        y = y0
+        for it in range(n+1):
+            if n % nsave == 0:
+                result[it/nsave, :] = y
+            derivative, R = dy(y, it*delta_t)
+            y += delta_t*derivative
+            if n % nsave == 0:
+                allR[it/nsave] = R
+
         return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': allR}
 
     def plotResult(self, t, L, S, R, E_H, **kwargs):
         from matplotlib import pyplot
-        fig = pyplot.figure()
+        fig = kwargs.get('fig', None)
+        if fig is None:
+            fig = pyplot.figure()
         ax = fig.add_subplot(411)
         ijuv = E_H.searchsorted(self.E_Hb)
         ipub = E_H.searchsorted(self.E_Hp)
@@ -440,7 +443,11 @@ class DEB_model(object):
 
         ax = fig.add_subplot(412)
         ax.set_title('maturity')
-        ax.plot(t, E_H, '-b')
+        ax.axhline(self.E_Hb, color='g')
+        ax.axhline(self.E_Hp, color='b')
+        ax.axvline(self.a_b, color='g')
+        ax.axvline(self.a_p, color='b')
+        ax.plot(t, E_H, '-k')
         ax.grid()
 
         ax = fig.add_subplot(413)
@@ -453,7 +460,7 @@ class DEB_model(object):
         ax.plot(t, S, '-b')
         ax.grid()
 
-        pyplot.show()
+        return fig
 
 def plot(ax, t, values, perc_wide = 0.025, perc_narrow = 0.25, ylabel=None, title=None, color='k'):
     values.sort()
@@ -552,6 +559,8 @@ if __name__ == '__main__':
     model = DEB_model()
     import argparse
     import io
+    from matplotlib import pyplot
+    import timeit
     parser = argparse.ArgumentParser()
     parser.add_argument('--traits', default='traits.txt')
     parser.add_argument('--c_T', type=float, default=1.)
@@ -572,5 +581,19 @@ if __name__ == '__main__':
         print('%s: %s' % (name, value))
         setattr(model, name, value)
     model.report(c_T=args.c_T)
-    result = model.simulate(c_T=args.c_T)
-    model.plotResult(**result)
+    delta_t = 0.1
+    start = timeit.default_timer()
+    result_c = model.simulate(int(model.a_99/delta_t), delta_t, c_T=args.c_T)
+    print('C duration: %s s' % (timeit.default_timer() - start))
+    model.cmodel = None
+    start = timeit.default_timer()
+    result_py = model.simulate(int(model.a_99/delta_t), delta_t, c_T=args.c_T)
+    print('Python duration: %s s' % (timeit.default_timer() - start))
+    fig = model.plotResult(**result_c)
+    model.plotResult(fig=fig, **result_py)
+    print('Relative differences (C vs Python):')
+    for variable in ('L', 'E', 'E_H', 'R', 'S'):
+        L_diff = result_c[variable] - result_py[variable]
+        vmin, vmax = min(result_c[variable].min(), result_py[variable].min()), min(result_c[variable].max(), result_py[variable].max())
+        print('  %s: %s - %s (range = %s)' % (variable, L_diff.min()/(vmax-vmin), L_diff.max()/(vmax-vmin), vmax-vmin))
+    pyplot.show()

@@ -1,6 +1,11 @@
+cimport cython
 import numpy
 cimport numpy
-from math import exp
+
+from libc.math cimport exp
+
+DTYPE = numpy.double
+ctypedef numpy.double_t DTYPE_t
 
 cdef class Model:
     cdef public double v
@@ -11,6 +16,7 @@ cdef class Model:
     cdef public double k_J
     cdef public double p_Am
     cdef public double E_Hb
+    cdef public double E_Hj
     cdef public double E_Hp
     cdef public double kap_R
     cdef public double h_a
@@ -23,7 +29,7 @@ cdef class Model:
     cdef public double r_B
     cdef public double s_M
 
-    def get_birth_state(self, double E_0, double delta_t=1.):
+    def get_birth_state(Model self, double E_0, double delta_t=1.):
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
         cdef double L2, L3, denom, p_C
@@ -58,14 +64,16 @@ cdef class Model:
                 return
         return t, E, L
 
-    def integrate(self, int n, double delta_t, c_T=1., f=1.):
-        cdef numpy.ndarray[numpy.double_t, ndim=2] result = numpy.zeros([n+1, 10], dtype=numpy.double)
+    @cython.boundscheck(False) # turn off bounds-checking for entire function
+    @cython.wraparound(False)  # turn off negative index wrapping for entire function
+    def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1.):
+        cdef numpy.ndarray[DTYPE_t, ndim=2] result = numpy.zeros([int(n/nsave)+1, 10], dtype=DTYPE)
 
-        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
+        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
         cdef double E_m, L_m, L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
         cdef double L2, L3, s, p_C, p_A, p_R, denom
         cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
-        cdef int i
+        cdef int i, isave
 
         kap = self.kap
         v = self.v*c_T
@@ -75,6 +83,7 @@ cdef class Model:
         p_T = self.p_T*c_T
         E_G = self.E_G
         E_Hb = self.E_Hb
+        E_Hj = self.E_Hj
         E_Hp = self.E_Hp
         s_G = self.s_G
         h_a = self.h_a*c_T*c_T
@@ -94,15 +103,17 @@ cdef class Model:
 
         E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
         for i in range(n+1):
-            result[i, 0] = E
-            result[i, 1] = L
-            result[i, 2] = E_H
-            result[i, 3] = E_R
-            result[i, 4] = Q
-            result[i, 5] = H
-            result[i, 6] = S
-            result[i, 7] = cumR
-            result[i, 8] = cumt
+            isave = i/nsave
+            if i % nsave == 0:
+                result[isave, 0] = E
+                result[isave, 1] = L
+                result[isave, 2] = E_H
+                result[isave, 3] = E_R
+                result[isave, 4] = Q
+                result[isave, 5] = H
+                result[isave, 6] = S
+                result[isave, 7] = cumR
+                result[isave, 8] = cumt
 
             L2 = L*L
             L3 = L*L2
@@ -145,11 +156,12 @@ cdef class Model:
             cumt += delta_t * dcumt
 
             # Save diagnostics
-            result[i, 9] = dE_R/E_0
+            if i % nsave == 0:
+                result[isave, 9] = dE_R/E_0
 
         return result
 
-    def find_maturity(self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
+    def find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
         cdef double r_B, E_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, one_minus_kap, k_J, v_E_G_plus_P_T_per_kap
         cdef double t, E_H
         cdef double L_i
@@ -183,7 +195,7 @@ cdef class Model:
         L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
         return t_ini + t, L
 
-    def find_maturity_v1(self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double t_max=365000., double t_ini=0.):
+    def find_maturity_v1(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double t_max=365000., double t_ini=0.):
         cdef double E_m, v, kap, p_M, p_T, E_G, V_ini, r, prefactor, k_J
         cdef double t, E_H
         cdef int done
