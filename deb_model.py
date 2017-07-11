@@ -4,31 +4,36 @@ import os
 import math
 import numpy
 try:
-    import pyximport
-    pyximport.install(setup_args={'include_dirs': numpy.get_include()})
     import deb_model_eq
-except ImportError, e:
-    print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
-    deb_model_eq = None
+except ImportError:
+    try:
+        import pyximport
+        pyximport.install(setup_args={'include_dirs': numpy.get_include()})
+        import deb_model_eq
+    except ImportError, e:
+        print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
+        deb_model_eq = None
 
 import scipy.integrate
+
+primary_parameters = 'p_Am', 'v', 'p_M', 'p_T', 'kap', 'E_G', 'E_Hb', 'E_Hp', 'E_Hj', 'k_J', 'h_a', 's_G', 'kap_R', 'kap_X'
 
 class DEB_model(object):
     def __init__(self):
         self.p_Am = None # {p_Am}, spec assimilation flux (J/d.cm^2)
         self.v = None   # energy conductance (cm/d)
         self.p_M = None # [p_M], vol-spec somatic maint, J/d.cm^3 
-        self.p_T = None # {p_T}, surf-spec somatic maint, J/d.cm^2
+        self.p_T = 0. # {p_T}, surf-spec somatic maint, J/d.cm^2
         self.kap = None
         self.E_G = None    # [E_G], spec cost for structure
         self.E_Hb = None   # maturity at birth (J)
         self.E_Hp = None   # maturity at puberty (J)
+        self.E_Hj = None   # maturity at metamorphosis (J)
         self.k_J = None #k_J: maturity maint rate coefficient, 1/d
         self.h_a = None #Weibull aging acceleration (1/d^2)
         self.s_G = None #Gompertz stress coefficient
         self.kap_R = None # reproductive efficiency
-        self.kap_X = None # ???
-        self.p_T = 0.
+        self.kap_X = None # digestion efficiency of food to reserve
 
         # stf
         # foetal development (rather than egg development)
@@ -84,9 +89,7 @@ class DEB_model(object):
         #E_He: maturity at emergence (J) - hex model
         #kap_V: conversion efficient E -> V -> E - hex model
 
-        #kap_X: digestion efficiency of food to reserve
         #kap_P: digestion efficiency of food to faeces
-        #kap_R: reproduction efficiency
         #F_m {F_m}, max spec searching rate (l/d.cm^2)
         #s_j: reprod buffer/structure at pupation as fraction of max (-) - hex model
 
@@ -227,19 +230,8 @@ class DEB_model(object):
 
         if deb_model_eq is not None:
             self.cmodel = deb_model_eq.Model()
-            self.cmodel.v = self.v
-            self.cmodel.p_Am = self.p_Am
-            self.cmodel.p_M = self.p_M
-            self.cmodel.p_T = self.p_T
-            self.cmodel.E_G = self.E_G
-            self.cmodel.kap = self.kap
-            self.cmodel.k_J = self.k_J
-            self.cmodel.E_Hb = self.E_Hb
-            self.cmodel.E_Hj = self.E_Hj
-            self.cmodel.E_Hp = self.E_Hp
-            self.cmodel.kap_R = self.kap_R
-            self.cmodel.h_a = self.h_a
-            self.cmodel.s_G = self.s_G
+            for parameter in primary_parameters:
+                setattr(self.cmodel, parameter, getattr(self, parameter))
             get_birth_state = self.cmodel.get_birth_state
             find_maturity = self.cmodel.find_maturity
             find_maturity_v1 = self.cmodel.find_maturity_v1
@@ -507,12 +499,16 @@ class HTMLGenerator(object):
         if t_end is None:
             t_end = numpy.sort([model.a_99 for model in self.valid_models])[int(0.9*n)]
             t_b_10 = numpy.sort([model.a_b for model in self.valid_models])[int(0.1*n)]
-        t = numpy.linspace(0., t_end, max(1000, int(2*t_end/t_b_10)))
-        Ls = numpy.empty((t.shape[0], n))
-        Ss = numpy.empty((t.shape[0], n))
-        Rs = numpy.empty((t.shape[0], n))
+        delta_t = t_b_10/2
+        nt = int(t_end/delta_t)
+        nsave = max(1, int(math.floor(nt/1000)))
         for i, model in enumerate(self.valid_models):
-            result = model.simulate(t)
+            result = model.simulate(nt, delta_t, nsave)
+            t = result['t']
+            if i == 0:
+                Ls = numpy.empty((len(t), n))
+                Ss = numpy.empty((len(t), n))
+                Rs = numpy.empty((len(t), n))
             Ls[:, i] = result['L']
             Ss[:, i] = result['S']
             Rs[:, i] = result['R']
