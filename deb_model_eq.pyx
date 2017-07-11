@@ -1,11 +1,11 @@
 cimport cython
-import numpy
 cimport numpy
 
 from libc.math cimport exp
 
-DTYPE = numpy.double
 ctypedef numpy.double_t DTYPE_t
+
+numpy.import_array()
 
 cdef class Model:
     cdef public double v
@@ -19,6 +19,7 @@ cdef class Model:
     cdef public double E_Hj
     cdef public double E_Hp
     cdef public double kap_R
+    cdef public double kap_X
     cdef public double h_a
     cdef public double s_G
 
@@ -29,6 +30,7 @@ cdef class Model:
     cdef public double r_B
     cdef public double s_M
 
+    @cython.cdivision(True)
     def get_birth_state(Model self, double E_0, double delta_t=1.):
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
@@ -64,10 +66,12 @@ cdef class Model:
                 return
         return t, E, L
 
+    @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
     def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1.):
-        cdef numpy.ndarray[DTYPE_t, ndim=2] result = numpy.zeros([int(n/nsave)+1, 10], dtype=DTYPE)
+        cdef numpy.npy_intp *dims = [(n/nsave)+1, 10]
+        cdef numpy.ndarray[DTYPE_t, ndim=2] result = numpy.PyArray_EMPTY(2, dims, numpy.NPY_DOUBLE, 0)
 
         cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
         cdef double E_m, L_m, L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
@@ -161,6 +165,7 @@ cdef class Model:
 
         return result
 
+    @cython.cdivision(True)
     def find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
         cdef double r_B, E_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, one_minus_kap, k_J, v_E_G_plus_P_T_per_kap
         cdef double t, E_H
@@ -195,6 +200,7 @@ cdef class Model:
         L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
         return t_ini + t, L
 
+    @cython.cdivision(True)
     def find_maturity_v1(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double t_max=365000., double t_ini=0.):
         cdef double E_m, v, kap, p_M, p_T, E_G, V_ini, r, prefactor, k_J
         cdef double t, E_H
