@@ -253,7 +253,7 @@ class DEB_model(object):
         p = numpy.log10(E_0_ini),
         bracket = (p[0], p[0]+1)
         initial_simplex = None
-        for delta_t in (1., 0.1, 0.01):
+        for delta_t in (1., 0.1, 0.01, 0.001):
             if True:
                 p_new = scipy.optimize.minimize_scalar(error_in_E, bracket=bracket, args=(delta_t, )).x,
                 step = min(abs(p_new[0] - p[0])/10, 1.)
@@ -264,13 +264,18 @@ class DEB_model(object):
                 initial_simplex = numpy.array(((p_new[0] - step, ), (p_new[0] + step, )))
             p = p_new
             E_0 = 10.**p[0]
-            #print(E_0, get_birth_state(E_0, delta_t=delta_t))
+
+            # Stop if we have the time of birth at 1 % accuracy
+            birth_state = get_birth_state(E_0, delta_t=delta_t)
+            if birth_state is None:
+                if verbose:
+                    print('Unable to determine cost of an egg (E_0).')
+                return
+            if delta_t < birth_state[0]*0.01:
+                break
+            #print(E_0, birth_state)
+
         self.E_0 = E_0
-        birth_state = get_birth_state(E_0, delta_t=0.01)
-        if birth_state is None:
-            if verbose:
-                print('Unable to determine cost of an egg (E_0).')
-            return
         self.a_b, Em, self.L_b = birth_state
 
         self.L_m = L_m
@@ -497,9 +502,9 @@ class HTMLGenerator(object):
         # Collect results for all model instances
         n = len(self.valid_models)
         if t_end is None:
-            t_end = numpy.sort([model.a_99 for model in self.valid_models])[int(0.9*n)]
-            t_b_10 = numpy.sort([model.a_b for model in self.valid_models])[int(0.1*n)]
-        delta_t = t_b_10/2
+            t_end = min(numpy.sort([model.a_99 for model in self.valid_models])[int(0.9*n)], 365.*200)
+        a_b_10 = numpy.sort([model.a_b for model in self.valid_models])[int(0.1*n)]
+        delta_t = max(0.04, a_b_10/4)
         nt = int(t_end/delta_t)
         nsave = max(1, int(math.floor(nt/1000)))
         for i, model in enumerate(self.valid_models):
@@ -514,6 +519,7 @@ class HTMLGenerator(object):
             Rs[:, i] = result['R']
 
         strings = []
+        strings.append('delta_t=%s, nt=%s, nsave=%s' % (delta_t, nt, nsave))
 
         fig = pyplot.figure(figsize=figsize)
         params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'L_i', 'R_i'
@@ -530,19 +536,19 @@ class HTMLGenerator(object):
         ax = fig.gca()
 
         ax.cla()
-        plot(ax, t, Ls, perc_wide=None, title='growth', ylabel='structural length (cm)', color=color)
+        plot(ax, t, Ls, perc_wide=0.1, title='growth', ylabel='structural length (cm)', color=color)
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tL.png'), dpi=72)
         strings.append('<img src="%s/tL.png"/><br>' % relworkdir)
 
         ax.cla()
-        plot(ax, t, Rs, perc_wide=None, title='reproduction', ylabel='reproduction rate (#/d)', color=color)
+        plot(ax, t, Rs, perc_wide=0.1, title='reproduction', ylabel='reproduction rate (#/d)', color=color)
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tR.png'), dpi=72)
         strings.append('<img src="%s/tR.png"/><br>' % relworkdir)
 
         ax.cla()
-        plot(ax, t, Ss, perc_wide=None, title='survival', ylabel='survival (-)', color=color)
+        plot(ax, t, Ss, perc_wide=0.1, title='survival', ylabel='survival (-)', color=color)
         ax.set_ylim(0., 1.)
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tS.png'), dpi=72)
