@@ -521,27 +521,37 @@ class HTMLGenerator(object):
             Rs[:, i] = result['R']
 
         strings = []
-        strings.append('delta_t=%s, nt=%s, nsave=%s' % (delta_t, nt, nsave))
+        #strings.append('delta_t=%s, nt=%s, nsave=%s' % (delta_t, nt, nsave))
 
-        fig = pyplot.figure(figsize=figsize)
-        params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'L_i', 'R_i'
         class Fmt(matplotlib.ticker.LogFormatterMathtext):
             def __call__(self, x, pos=None):
                 return matplotlib.ticker.LogFormatterMathtext.__call__(self, 10.**x, pos)
 
-        for i, p in enumerate(params):
-            ax = fig.add_subplot(1, len(params), i+1)
-            values = numpy.array([getattr(model, p) for model in self.valid_models])
-            #ax.boxplot(values, labels=(p,), whis=(10, 90))
-            ax.violinplot(numpy.log10(values), showmedians=True)
-            ax.set_xticks(())
-            ax.set_title(p)
-            ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator())
-            ax.yaxis.set_major_formatter(Fmt())
-            #ax.set_yscale('log')
-        fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=72)
-        strings.append('<img src="%s/boxplots.png"/><br>' % relworkdir)
+        params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'L_i', 'R_i'
+
+        if n > 1:
+            fig = pyplot.figure(figsize=figsize)
+            for i, p in enumerate(params):
+                ax = fig.add_subplot(1, len(params), i+1)
+                values = numpy.array([getattr(model, p) for model in self.valid_models])
+                #ax.boxplot(values, labels=(p,), whis=(10, 90))
+                ax.violinplot(numpy.log10(values), showmedians=True)
+                ax.set_xticks(())
+                ax.set_title(p)
+                ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator())
+                ax.yaxis.set_major_formatter(Fmt())
+                #ax.set_yscale('log')
+            fig.tight_layout()
+            fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=72)
+            strings.append('<img src="%s/boxplots.png"/><br>' % relworkdir)
+        else:
+            strings.append('<table>')
+            strings.append('<thead><tr><th>parameter</th><th>value</th></tr></thead>')
+            strings.append('<tbody>')
+            for i, p in enumerate(params):
+                strings.append('  <tr><td>%s</td><td>%.3g</td></tr>' % (p, getattr(self.valid_models[0], p)))
+            strings.append('</tbody>')
+            strings.append('</table>')
 
         fig = pyplot.figure(figsize=figsize)
         ax = fig.gca()
