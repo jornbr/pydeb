@@ -9,6 +9,6 @@ from Cython.Build import cythonize
 
 setup(
   name = 'DEB model in C',
-  ext_modules = cythonize("deb_model_eq.pyx"),
+  ext_modules = cythonize("cmodel.pyx"),
   include_dirs=[numpy.get_include()],
 )

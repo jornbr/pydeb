@@ -4,21 +4,21 @@ import os
 import math
 import numpy
 try:
-    import deb_model_eq
+    import cmodel
 except ImportError:
     try:
         import pyximport
         pyximport.install(setup_args={'include_dirs': numpy.get_include()})
-        import deb_model_eq
+        import cmodel
     except ImportError, e:
         print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
-        deb_model_eq = None
+        cmodel = None
 
 import scipy.integrate
 
 primary_parameters = 'p_Am', 'v', 'p_M', 'p_T', 'kap', 'E_G', 'E_Hb', 'E_Hp', 'E_Hj', 'k_J', 'h_a', 's_G', 'kap_R', 'kap_X'
 
-class DEB_model(object):
+class Model(object):
     def __init__(self):
         self.p_Am = None # {p_Am}, spec assimilation flux (J/d.cm^2)
         self.v = None   # energy conductance (cm/d)
@@ -228,8 +228,8 @@ class DEB_model(object):
             L = L_ini*exp(r/3*t)
             return t_ini + t, L
 
-        if deb_model_eq is not None:
-            self.cmodel = deb_model_eq.Model()
+        if cmodel is not None:
+            self.cmodel = cmodel.Model()
             for parameter in primary_parameters:
                 setattr(self.cmodel, parameter, getattr(self, parameter))
             get_birth_state = self.cmodel.get_birth_state
@@ -569,7 +569,7 @@ class HTMLGenerator(object):
 
 #scipy.integrate.
 if __name__ == '__main__':
-    model = DEB_model()
+    model = Model()
     import argparse
     import io
     from matplotlib import pyplot
