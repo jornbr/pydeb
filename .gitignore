@@ -3,3 +3,4 @@
 *.png
 /build
 *.pyd
+*.c
