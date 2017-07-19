@@ -471,6 +471,7 @@ def plot(ax, t, values, perc_wide = 0.025, perc_narrow = 0.25, ylabel=None, titl
         perc_narrow_l = values[:, int(perc_narrow*n)]
         perc_narrow_u = values[:, int((1-perc_narrow)*n)]
         ax.fill_between(t, perc_narrow_l, perc_narrow_u, facecolor=color, alpha=0.4)
+        color = 'k'
     ax.plot(t, perc_50, color)
     ax.grid(True)
     ax.set_xlabel('time (d)')
@@ -497,6 +498,7 @@ class HTMLGenerator(object):
 
     def generate(self, workdir, color='k', label='', t_end=None, figsize=(8, 5)):
         from matplotlib import pyplot
+        import matplotlib.ticker
         relworkdir = os.path.relpath(workdir)
 
         # Collect results for all model instances
@@ -523,11 +525,20 @@ class HTMLGenerator(object):
 
         fig = pyplot.figure(figsize=figsize)
         params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'L_i', 'R_i'
+        class Fmt(matplotlib.ticker.LogFormatterMathtext):
+            def __call__(self, x, pos=None):
+                return matplotlib.ticker.LogFormatterMathtext.__call__(self, 10.**x, pos)
+
         for i, p in enumerate(params):
             ax = fig.add_subplot(1, len(params), i+1)
             values = numpy.array([getattr(model, p) for model in self.valid_models])
-            ax.boxplot(values, labels=(p,), whis=(10, 90))
-            ax.set_yscale('log')
+            #ax.boxplot(values, labels=(p,), whis=(10, 90))
+            ax.violinplot(numpy.log10(values), showmedians=True)
+            ax.set_xticks(())
+            ax.set_title(p)
+            ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator())
+            ax.yaxis.set_major_formatter(Fmt())
+            #ax.set_yscale('log')
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=72)
         strings.append('<img src="%s/boxplots.png"/><br>' % relworkdir)
@@ -536,19 +547,19 @@ class HTMLGenerator(object):
         ax = fig.gca()
 
         ax.cla()
-        plot(ax, t, Ls, perc_wide=0.1, title='growth', ylabel='structural length (cm)', color=color)
+        plot(ax, t, Ls, perc_wide=0.1, title='growth', ylabel='structural length (cm)', color='b')
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tL.png'), dpi=72)
         strings.append('<img src="%s/tL.png"/><br>' % relworkdir)
 
         ax.cla()
-        plot(ax, t, Rs, perc_wide=0.1, title='reproduction', ylabel='reproduction rate (#/d)', color=color)
+        plot(ax, t, Rs, perc_wide=0.1, title='reproduction', ylabel='reproduction rate (#/d)', color='g')
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tR.png'), dpi=72)
         strings.append('<img src="%s/tR.png"/><br>' % relworkdir)
 
         ax.cla()
-        plot(ax, t, Ss, perc_wide=0.1, title='survival', ylabel='survival (-)', color=color)
+        plot(ax, t, Ss, perc_wide=0.1, title='survival', ylabel='survival (-)', color='r')
         ax.set_ylim(0., 1.)
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tS.png'), dpi=72)
