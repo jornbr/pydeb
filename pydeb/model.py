@@ -109,6 +109,11 @@ class Model(object):
         self.cmodel = None
 
     def initialize(self, E_0_ini=None, verbose=False):
+        assert self.p_T >= 0.
+        assert self.p_M >= 0.
+        assert self.p_Am >= 0.
+        assert self.v >= 0.
+        assert self.E_G >= 0.
         self.valid = False
         self.kap = max(min(self.kap, 1.), 0.)
         self.kap_R = max(min(self.kap_R, 1.), 0.)
@@ -312,6 +317,7 @@ class Model(object):
         if self.E_Hp >= self.E_Hj:
             # puberty after metamorphosis
             self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_j)
+            #print(self.a_p, self.L_p, self.L_i, self.L_m, self.L_T)
         else:
             # puberty before metamorphosis
             self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
@@ -323,6 +329,32 @@ class Model(object):
         p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kap + p_T_per_kap)*self.s_M + p_M_per_kap*self.L_i)/(E_m + E_G_per_kap)
         self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
         self.valid = True
+
+    def writeFABMConfiguration(self, path, name='deb', model='deb/population'):
+        if not self.initialized:
+            self.initialize()
+        with open(path, 'w') as f:
+            f.write('instances:\n')
+            f.write('  %s:\n' % name)
+            f.write('    model: %s\n' % model)
+            f.write('    parameters:\n')
+            f.write('      p_Am: %s\n' % self.p_Am)
+            f.write('      p_T: %s\n' % self.p_T)
+            f.write('      p_M: %s\n' % self.p_M)
+            f.write('      E_Hb: %s\n' % self.E_Hb)
+            f.write('      E_Hj: %s\n' % self.E_Hj)
+            f.write('      E_Hp: %s\n' % self.E_Hp)
+            f.write('      v: %s\n' % self.v)
+            f.write('      k_J: %s\n' % self.k_J)
+            f.write('      kap: %s\n' % self.kap)
+            f.write('      kap_R: %s\n' % self.kap_R)
+            f.write('      E_G: %s\n' % self.E_G)
+            f.write('      h_a: %s\n' % self.h_a)
+            f.write('      s_G: %s\n' % self.s_G)
+
+            f.write('      L_b: %s\n' % self.L_b)
+            f.write('      L_j: %s\n' % self.L_j)
+            f.write('      E_0: %s\n' % self.E_0)
 
     def report(self, c_T=1.):
         if not self.initialized:
@@ -347,8 +379,10 @@ class Model(object):
         if not self.valid:
             return
         t = numpy.linspace(0., n*delta_t, int(n/nsave)+1)
+        assert f >= 0. and f <= 1.
+        assert c_T > 0.
         if self.cmodel is not None:
-            result = self.cmodel.integrate(n, delta_t, nsave=nsave)
+            result = self.cmodel.integrate(n, delta_t, nsave=nsave, c_T=c_T, f=f)
             return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
 
         kap = self.kap
@@ -414,11 +448,14 @@ class Model(object):
         allR = numpy.empty((t.size,))
         y = y0
         for it in range(n+1):
-            if n % nsave == 0:
+            if it % nsave == 0:
                 result[it/nsave, :] = y
             derivative, R = dy(y, it*delta_t)
+            if not numpy.isfinite(derivative).all():
+                print('Temporal derivatives contain NaN: %s' % derivative)
+                sys.exit(1)
             y += delta_t*derivative
-            if n % nsave == 0:
+            if it % nsave == 0:
                 allR[it/nsave] = R
 
         return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': allR}
