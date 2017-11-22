@@ -595,12 +595,14 @@ class HTMLGenerator(object):
 
         ax.cla()
         plot(ax, t, Ls, perc_wide=0.1, title='growth', ylabel='structural length (cm)', color='b')
+        ax.set_ylim(0, None)
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tL.png'), dpi=72)
         strings.append('<img src="%s/tL.png"/><br>' % relworkdir)
 
         ax.cla()
         plot(ax, t, Rs, perc_wide=0.1, title='reproduction', ylabel='reproduction rate (#/d)', color='g')
+        ax.set_ylim(0, None)
         fig.tight_layout()
         fig.savefig(os.path.join(workdir, 'tR.png'), dpi=72)
         strings.append('<img src="%s/tR.png"/><br>' % relworkdir)
