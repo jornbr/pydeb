@@ -2,7 +2,10 @@ from __future__ import print_function
 
 import os
 import math
+import urllib
+
 import numpy
+
 try:
     import cmodel
 except ImportError:
@@ -533,10 +536,14 @@ class HTMLGenerator(object):
                 E_0_ini = numpy.mean(E_0s)
                 self.valid_models.append(model)
 
-    def generate(self, workdir, color='k', label='', t_end=None, figsize=(8, 5)):
+    def generate(self, workdir, color='k', label='', t_end=None, figsize=(6, 4), dpi=96):
+        import matplotlib
         from matplotlib import pyplot
         import matplotlib.ticker
         relworkdir = os.path.relpath(workdir)
+
+        matplotlib.rcParams['font.sans-serif'] = 'Verdana'
+        matplotlib.rcParams['font.size'] = 9
 
         # Collect results for all model instances
         n = len(self.valid_models)
@@ -579,8 +586,8 @@ class HTMLGenerator(object):
                 ax.yaxis.set_major_formatter(Fmt())
                 #ax.set_yscale('log')
             fig.tight_layout()
-            fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=72)
-            strings.append('<img src="%s/boxplots.png"/><br>' % relworkdir)
+            fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=dpi)
+            strings.append('<img alt="violin plots of derived life history parameters" src="%s"/><br>' % urllib.pathname2url('%s/boxplots.png' % relworkdir))
         else:
             strings.append('<table>')
             strings.append('<thead><tr><th>parameter</th><th>value</th></tr></thead>')
@@ -597,22 +604,22 @@ class HTMLGenerator(object):
         plot(ax, t, Ls, perc_wide=0.1, title='growth', ylabel='structural length (cm)', color='b')
         ax.set_ylim(0, None)
         fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'tL.png'), dpi=72)
-        strings.append('<img src="%s/tL.png"/><br>' % relworkdir)
+        fig.savefig(os.path.join(workdir, 'tL.png'), dpi=dpi)
+        strings.append('<img alt="time series of structural length" src="%s"/><br>' % urllib.pathname2url('%s/tL.png' % relworkdir))
 
         ax.cla()
         plot(ax, t, Rs, perc_wide=0.1, title='reproduction', ylabel='reproduction rate (#/d)', color='g')
         ax.set_ylim(0, None)
         fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'tR.png'), dpi=72)
-        strings.append('<img src="%s/tR.png"/><br>' % relworkdir)
+        fig.savefig(os.path.join(workdir, 'tR.png'), dpi=dpi)
+        strings.append('<img alt="time series of reproduction rate" src="%s"/><br>' % urllib.pathname2url('%s/tR.png' % relworkdir))
 
         ax.cla()
         plot(ax, t, Ss, perc_wide=0.1, title='survival', ylabel='survival (-)', color='r')
         ax.set_ylim(0., 1.)
         fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'tS.png'), dpi=72)
-        strings.append('<img src="%s/tS.png"/><br>' % relworkdir)
+        fig.savefig(os.path.join(workdir, 'tS.png'), dpi=dpi)
+        strings.append('<img alt="time series of survival" src="%s"/><br>' % urllib.pathname2url('%s/tS.png' % relworkdir))
 
         return '\n'.join(strings)
 
