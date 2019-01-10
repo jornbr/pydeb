@@ -1,5 +1,6 @@
 from __future__ import print_function
 
+import sys
 import os
 import math
 import urllib
@@ -12,8 +13,8 @@ except ImportError:
     try:
         import pyximport
         pyximport.install(setup_args={'include_dirs': numpy.get_include()})
-        import cmodel
-    except ImportError, e:
+        from . import cmodel
+    except ImportError as e:
         print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
         cmodel = None
 
