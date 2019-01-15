@@ -43,28 +43,33 @@ cdef class Model:
         cdef double E_G_per_kap = self.E_G/self.kap
         cdef double one_minus_kap = 1. - self.kap
         cdef double v_E_G_plus_P_T_per_kap = (self.v*self.E_G + self.p_T)/self.kap
+        cdef double v = self.v
+        cdef double k_J = self.k_J
+        cdef double E_Hb = self.E_Hb
 
         cdef double dt = delta_t
 
-        t, E, L, E_H = 0., E_0, 0., 0.
-        while done == 0:
-            L2 = L*L
-            L3 = L*L2
-            denom = E + E_G_per_kap*L3
-            p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
-            dL = (E*self.v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
-            dE = -p_C
-            dE_H = one_minus_kap*p_C - self.k_J*E_H
-            if E_H + dt * dE_H > self.E_Hb:
-                dt = (self.E_Hb - E_H)/dE_H
-                done = 1
-            t += dt
-            E += dt * dE
-            L += dt * dL
-            E_H += dt * dE_H
-            if E < 0 or dL < 0:
-                return
-        return t, E, L
+        with nogil:
+            t, E, L, E_H = 0., E_0, 0., 0.
+            while done == 0:
+                L2 = L*L
+                L3 = L*L2
+                denom = E + E_G_per_kap*L3
+                p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
+                dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
+                dE = -p_C
+                dE_H = one_minus_kap*p_C - k_J*E_H
+                if E_H + dt * dE_H > E_Hb:
+                    dt = (E_Hb - E_H)/dE_H
+                    done = 1
+                t += dt
+                E += dt * dE
+                L += dt * dL
+                E_H += dt * dE_H
+                if E < 0 or dL < 0:
+                    done = 2
+        if done == 1:
+            return t, E, L
 
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
@@ -105,63 +110,64 @@ cdef class Model:
         v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kap = 1-kap
 
-        E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
-        for i in range(n+1):
-            isave = i/nsave
-            if i % nsave == 0:
-                result[isave, 0] = E
-                result[isave, 1] = L
-                result[isave, 2] = E_H
-                result[isave, 3] = E_R
-                result[isave, 4] = Q
-                result[isave, 5] = H
-                result[isave, 6] = S
-                result[isave, 7] = cumR
-                result[isave, 8] = cumt
+        with nogil:
+            E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
+            for i in range(n+1):
+                isave = i/nsave
+                if i % nsave == 0:
+                    result[isave, 0] = E
+                    result[isave, 1] = L
+                    result[isave, 2] = E_H
+                    result[isave, 3] = E_R
+                    result[isave, 4] = Q
+                    result[isave, 5] = H
+                    result[isave, 6] = S
+                    result[isave, 7] = cumR
+                    result[isave, 8] = cumt
 
-            L2 = L*L
-            L3 = L*L2
-            s = max(1., min(s_M, L/L_b))
+                L2 = L*L
+                L3 = L*L2
+                s = max(1., min(s_M, L/L_b))
 
-            # Energy fluxes in J/d
-            denom = E + E_G_per_kap*L3
-            p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/denom
-            p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
-            p_R = one_minus_kap*p_C - k_J*E_H # J/d
+                # Energy fluxes in J/d
+                denom = E + E_G_per_kap*L3
+                p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/denom
+                p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
+                p_R = one_minus_kap*p_C - k_J*E_H # J/d
 
-            # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
-            dE = p_A - p_C
-            dL = (E*v*s-(p_M_per_kap*L+p_T_per_kap*s)*L3)/3/denom
-            if E_H < E_Hp:
-                dE_H = p_R
-                dE_R = 0.
-            else:
-                dE_H = 0
-                dE_R = kap_R * p_R
+                # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
+                dE = p_A - p_C
+                dL = (E*v*s-(p_M_per_kap*L+p_T_per_kap*s)*L3)/3/denom
+                if E_H < E_Hp:
+                    dE_H = p_R
+                    dE_R = 0.
+                else:
+                    dE_H = 0
+                    dE_R = kap_R * p_R
 
-            # Damage-inducing compounds, damage, survival (0-1) - p 216
-            dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
-            dH = Q
-            dS = 0. if L3 <= 0. or S<1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
+                # Damage-inducing compounds, damage, survival (0-1) - p 216
+                dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
+                dH = Q
+                dS = 0. if L3 <= 0. or S<1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
 
-            # Cumulative reproduction (#) and life span (d)
-            dcumR = S*dE_R/E_0
-            dcumt = S
+                # Cumulative reproduction (#) and life span (d)
+                dcumR = S*dE_R/E_0
+                dcumt = S
 
-            # Update state
-            E += delta_t * dE
-            L += delta_t * dL
-            E_H += delta_t * dE_H
-            E_R += delta_t * dE_R
-            Q += delta_t * dQ
-            H += delta_t * dH
-            S += delta_t * dS
-            cumR += delta_t * dcumR
-            cumt += delta_t * dcumt
+                # Update state
+                E += delta_t * dE
+                L += delta_t * dL
+                E_H += delta_t * dE_H
+                E_R += delta_t * dE_R
+                Q += delta_t * dQ
+                H += delta_t * dH
+                S += delta_t * dS
+                cumR += delta_t * dcumR
+                cumt += delta_t * dcumt
 
-            # Save diagnostics
-            if i % nsave == 0:
-                result[isave, 9] = dE_R/E_0
+                # Save diagnostics
+                if i % nsave == 0:
+                    result[isave, 9] = dE_R/E_0
 
         return result
 
@@ -185,20 +191,23 @@ cdef class Model:
         t = 0.
         E_H = E_H_ini
         L_range = (self.L_m - self.L_T)*self.s_M - L_ini  # note L_i at f=1
-        done = 0
-        while done == 0:
+        with nogil:
+            done = 0
+            while done == 0:
+                L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
+                p_C = L*L*E_m*(v_E_G_plus_P_T_per_kap*s_M + p_M_per_kap*L)/(E_m + E_G_per_kap)
+                dE_H = one_minus_kap*p_C - k_J*E_H
+                if E_H + delta_t * dE_H > E_H_target:
+                    delta_t = (E_H_target - E_H)/dE_H
+                    done = 1
+                t += delta_t
+                E_H += dE_H*delta_t
+                if t > t_max:
+                    done = 2
+        if done == 1:
             L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
-            p_C = L*L*E_m*(v_E_G_plus_P_T_per_kap*s_M + p_M_per_kap*L)/(E_m + E_G_per_kap)
-            dE_H = one_minus_kap*p_C - k_J*E_H
-            if E_H + delta_t * dE_H > E_H_target:
-                delta_t = (E_H_target - E_H)/dE_H
-                done = 1
-            t += delta_t
-            E_H += dE_H*delta_t
-            if t > t_max:
-                return None, None
-        L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
-        return t_ini + t, L
+            return t_ini + t, L
+        return None, None
 
     @cython.cdivision(True)
     def find_maturity_v1(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double t_max=365000., double t_ini=0.):
@@ -223,16 +232,18 @@ cdef class Model:
 
         t = 0.
         E_H = self.E_Hb
-        done = 0
-        while done == 0:
-            dE_H = prefactor*exp(r*t) - k_J*E_H
-            if E_H + delta_t * dE_H > E_H_target:
-                delta_t = (E_H_target - E_H)/dE_H
-                done = 1
-            E_H += dE_H*delta_t
-            t += delta_t
-            if t > t_max:
-                return None, None
-
-        L = L_ini*exp(r/3*t)
-        return t_ini + t, L
+        with nogil:
+            done = 0
+            while done == 0:
+                dE_H = prefactor*exp(r*t) - k_J*E_H
+                if E_H + delta_t * dE_H > E_H_target:
+                    delta_t = (E_H_target - E_H)/dE_H
+                    done = 1
+                E_H += dE_H*delta_t
+                t += delta_t
+                if t > t_max:
+                    done = 2
+        if done == 1:
+            L = L_ini*exp(r/3*t)
+            return t_ini + t, L
+        return None, None
