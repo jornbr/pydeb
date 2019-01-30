@@ -74,15 +74,15 @@ cdef class Model:
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
-    def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1.):
+    def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1., int devel_state_ini=1):
         cdef numpy.npy_intp *dims = [(n/nsave)+1, 10]
         cdef numpy.ndarray[DTYPE_t, ndim=2] result = numpy.PyArray_EMPTY(2, dims, numpy.NPY_DOUBLE, 0)
 
         cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
         cdef double E_m, L_m, L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
-        cdef double L2, L3, s, p_C, p_A, p_R, denom
+        cdef double L2, L3, s, p_C, p_R, denom
         cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
-        cdef int i, isave
+        cdef int i, isave, devel_state
 
         kap = self.kap
         v = self.v*c_T
@@ -109,7 +109,9 @@ cdef class Model:
         p_T_per_kap = p_T/kap
         v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kap = 1-kap
+        devel_state = devel_state_ini
 
+        dE_R = 0.
         with nogil:
             E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
             for i in range(n+1):
@@ -129,41 +131,49 @@ cdef class Model:
                 L3 = L*L2
                 s = max(1., min(s_M, L/L_b))
 
-                # Energy fluxes in J/d
-                denom = E + E_G_per_kap*L3
-                p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/denom
-                p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
-                p_R = one_minus_kap*p_C - k_J*E_H # J/d
-
-                # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
-                dE = p_A - p_C
-                dL = (E*v*s-(p_M_per_kap*L+p_T_per_kap*s)*L3)/3/denom
-                if E_H < E_Hp:
-                    dE_H = p_R
-                    dE_R = 0.
+                # Calculate current p_C (J/d) and update to next L and E
+                if (devel_state == -1):
+                    # developing foetus - explicit equations for L(t) and E(t)
+                    p_C = v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3
+                    L = v * ((i + 1) * delta_t) / 3
+                    E = L * E_m
                 else:
-                    dE_H = 0
+                    denom = E + E_G_per_kap*L3
+                    p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/denom
+
+                    dE = - p_C
+                    if devel_state > 1:
+                        # no longer an embryo/foetus - feeding/assimilation is active
+                        dE += p_Am * L2 * f * s
+                    dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) / 3 / denom
+                    E += delta_t * dE
+                    L += delta_t * dL
+
+                # Change in maturity (J) and reproduction buffer (J)
+                p_R = one_minus_kap * p_C - k_J * E_H   # J/d
+                if devel_state < 3:
+                    # maturation: update maturity and development state
+                    E_H += delta_t * p_R
+                    if (E_H > E_Hp):
+                        devel_state = 3   # adult
+                    elif (E_H > E_Hb):
+                        devel_state = 2   # juvenile (post birth)
+                else:
+                    # reproduction (cumulative allocation in J/d and average total offspring over lifetime in #)
                     dE_R = kap_R * p_R
+                    E_R += delta_t * dE_R
+                    cumR += delta_t * S * dE_R / E_0
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
                 dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
                 dH = Q
                 dS = 0. if L3 <= 0. or S<1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
 
-                # Cumulative reproduction (#) and life span (d)
-                dcumR = S*dE_R/E_0
-                dcumt = S
-
-                # Update state
-                E += delta_t * dE
-                L += delta_t * dL
-                E_H += delta_t * dE_H
-                E_R += delta_t * dE_R
-                Q += delta_t * dQ
-                H += delta_t * dH
-                S += delta_t * dS
-                cumR += delta_t * dcumR
-                cumt += delta_t * dcumt
+                # Update state variables related to survival
+                Q += delta_t * dQ     # damage inducing compounds (1/d2)
+                H += delta_t * dH     # hazard rate (1/d)
+                S += delta_t * dS     # survival (-)
+                cumt += delta_t * S   # average life span (d)
 
                 # Save diagnostics
                 if i % nsave == 0:
@@ -190,7 +200,7 @@ cdef class Model:
 
         t = 0.
         E_H = E_H_ini
-        L_range = (self.L_m - self.L_T)*self.s_M - L_ini  # note L_i at f=1
+        L_range = (self.L_m - self.L_T)*s_M - L_ini  # note L_i at f=1
         with nogil:
             done = 0
             while done == 0:
@@ -247,3 +257,34 @@ cdef class Model:
             L = L_ini*exp(r/3*t)
             return t_ini + t, L
         return None, None
+
+    @cython.cdivision(True)
+    def find_maturity_foetus(Model self, double E_H_target, double delta_t=1., double t_max=365000.):
+        cdef double k_J, prefactor1, prefactor2
+        cdef double t, E_H, E_0
+        cdef int done
+        cdef double dE_H
+
+        k_J = self.k_J
+        prefactor1 = (1. - self.kap) * (self.v * self.E_G + self.p_T) * self.v * self.v / (9 * self.kap)
+        prefactor2 = (1. - self.kap) * self.p_M * self.v**3 / (27 * self.kap)
+
+        t = 0.
+        E_H = 0.
+        with nogil:
+            done = 0
+            while done == 0:
+                dE_H = (prefactor1 + prefactor2 * t) * t * t - k_J * E_H
+                if E_H + delta_t * dE_H > E_H_target:
+                    delta_t = (E_H_target - E_H) / dE_H
+                    done = 1
+                E_H += dE_H * delta_t
+                t += delta_t
+                if t > t_max:
+                    done = 2
+        if done == 1:
+            E = self.v * self.v * t * t * t / 27 * self.p_Am
+            p_C_int = (prefactor1 / 3 + prefactor2 * t / 4) * t * t * t / (1. - self.kap)
+            E_0 = p_C_int + E
+            return t, self.v * t / 3, E_0
+        return None

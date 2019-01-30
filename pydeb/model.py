@@ -23,7 +23,7 @@ import scipy.integrate
 primary_parameters = 'p_Am', 'v', 'p_M', 'p_T', 'kap', 'E_G', 'E_Hb', 'E_Hp', 'E_Hj', 'k_J', 'h_a', 's_G', 'kap_R', 'kap_X'
 
 class Model(object):
-    def __init__(self):
+    def __init__(self, type='abj'):
         self.p_Am = None # {p_Am}, spec assimilation flux (J/d.cm^2)
         self.v = None   # energy conductance (cm/d)
         self.p_M = None # [p_M], vol-spec somatic maint, J/d.cm^3 
@@ -38,6 +38,7 @@ class Model(object):
         self.s_G = None #Gompertz stress coefficient
         self.kap_R = None # reproductive efficiency
         self.kap_X = None # digestion efficiency of food to reserve
+        self.type = type # std, abj, stf, stx
 
         # stf
         # foetal development (rather than egg development)
@@ -122,9 +123,11 @@ class Model(object):
         self.kap = max(min(self.kap, 1.), 0.)
         self.kap_R = max(min(self.kap_R, 1.), 0.)
         self.kap_X = max(min(self.kap_X, 1.), 0.)
-        self.E_Hj = max(self.E_Hb, self.E_Hj)
+        self.E_Hj = self.E_Hb if self.type in ('stf', 'stx') else max(self.E_Hb, self.E_Hj)
         self.E_Hp = max(self.E_Hb, self.E_Hp)
         self.initialized = True
+        self.devel_state_ini = -1 if self.type in ('stf', 'stx') else 1
+
         kap = self.kap
         v = self.v
         E_G = self.E_G
@@ -244,48 +247,62 @@ class Model(object):
             get_birth_state = self.cmodel.get_birth_state
             find_maturity = self.cmodel.find_maturity
             find_maturity_v1 = self.cmodel.find_maturity_v1
+            find_maturity_foetus = self.cmodel.find_maturity_foetus
 
-        import scipy.optimize
-        if E_0_ini is None:
-            E_0_ini = max(E_Hb, E_G*L_m**3)
-        for i in range(10):
-            if get_birth_state(E_0_ini) is not None:
-                break
-            E_0_ini *= 10
+        if self.type in ('stf', 'stx'):
+            # foetal development
+            for delta_t in (1., 0.1, 0.01, 0.001):
+                birth_state = find_maturity_foetus(self.E_Hb, delta_t)
+                if birth_state is None:
+                    if verbose:
+                        print('Unable to determine age/length at birth.')
+                    return
+                if delta_t < birth_state[0] * 0.01:
+                    break
+            self.a_b, self.L_b, self.E_0 = birth_state
         else:
-            if verbose:
-                print('Cannot find valid initial estimate for E_0 (tried up to %s)' % E_0_ini)
-            return
-
-        if verbose:
-            print('Determining cost of an egg and state at birth...')
-        p = numpy.log10(E_0_ini),
-        bracket = (p[0], p[0]+1)
-        initial_simplex = None
-        for delta_t in (1., 0.1, 0.01, 0.001):
-            if True:
-                p_new = scipy.optimize.minimize_scalar(error_in_E, bracket=bracket, args=(delta_t, )).x,
-                step = min(abs(p_new[0] - p[0])/10, 1.)
-                bracket = (p_new[0] - step, p_new[0] + step,)
+            # egg development
+            import scipy.optimize
+            if E_0_ini is None:
+                E_0_ini = max(E_Hb, E_G*L_m**3)
+            for i in range(10):
+                if get_birth_state(E_0_ini) is not None:
+                    break
+                E_0_ini *= 10
             else:
-                p_new = scipy.optimize.fmin(error_in_E, p, args=(delta_t, ), disp=False) #, initial_simplex=initial_simplex
-                step = min(abs(p_new[0] - p[0])/10, 1.)
-                initial_simplex = numpy.array(((p_new[0] - step, ), (p_new[0] + step, )))
-            p = p_new
-            E_0 = 10.**p[0]
-
-            # Stop if we have the time of birth at 1 % accuracy
-            birth_state = get_birth_state(E_0, delta_t=delta_t)
-            if birth_state is None:
                 if verbose:
-                    print('Unable to determine cost of an egg (E_0).')
+                    print('Cannot find valid initial estimate for E_0 (tried up to %s)' % E_0_ini)
                 return
-            if delta_t < birth_state[0]*0.01:
-                break
-            #print(E_0, birth_state)
 
-        self.E_0 = E_0
-        self.a_b, Em, self.L_b = birth_state
+            if verbose:
+                print('Determining cost of an egg and state at birth...')
+            p = numpy.log10(E_0_ini),
+            bracket = (p[0], p[0]+1)
+            initial_simplex = None
+            for delta_t in (1., 0.1, 0.01, 0.001):
+                if True:
+                    p_new = scipy.optimize.minimize_scalar(error_in_E, bracket=bracket, args=(delta_t, )).x,
+                    step = min(abs(p_new[0] - p[0])/10, 1.)
+                    bracket = (p_new[0] - step, p_new[0] + step,)
+                else:
+                    p_new = scipy.optimize.fmin(error_in_E, p, args=(delta_t, ), disp=False) #, initial_simplex=initial_simplex
+                    step = min(abs(p_new[0] - p[0])/10, 1.)
+                    initial_simplex = numpy.array(((p_new[0] - step, ), (p_new[0] + step, )))
+                p = p_new
+                E_0 = 10.**p[0]
+
+                # Stop if we have the time of birth at 1 % accuracy
+                birth_state = get_birth_state(E_0, delta_t=delta_t)
+                if birth_state is None:
+                    if verbose:
+                        print('Unable to determine cost of an egg (E_0).')
+                    return
+                if delta_t < birth_state[0]*0.01:
+                    break
+                #print(E_0, birth_state)
+
+            self.E_0 = E_0
+            self.a_b, _, self.L_b = birth_state
 
         self.L_m = L_m
         self.L_T = L_T
@@ -305,23 +322,32 @@ class Model(object):
             self.cmodel.r_B = self.r_B
             self.cmodel.L_m = self.L_m
             self.cmodel.L_T = self.L_T
-        if verbose:
-            print('Determining age and length at metamorphosis...')
-        self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
-        if self.a_j is None:
+
+        # metamorphosis
+        if self.E_Hj > self.E_Hb:
             if verbose:
-                print('Cannot determine age and length at metamorphosis.')
-            return
-        self.s_M = self.L_j/self.L_b
+                print('Determining age and length at metamorphosis...')
+            self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
+            if self.a_j is None:
+                if verbose:
+                    print('Cannot determine age and length at metamorphosis.')
+                return
+        else:
+            self.a_j, self.L_j = self.a_b, self.L_b
+        self.s_M = self.L_j / self.L_b
         if self.cmodel is not None:
             self.cmodel.s_M = self.s_M
         self.L_i = (self.L_m - self.L_T)*self.s_M
+        self.a_99 = self.a_j - numpy.log(1 - (0.99*self.L_i - self.L_j)/(self.L_i - self.L_j))/self.r_B
+        p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kap + p_T_per_kap)*self.s_M + p_M_per_kap*self.L_i)/(E_m + E_G_per_kap)
+        self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
+        max_E_H = (1 - kap) * p_C_i / self.k_J
+
         if verbose:
             print('Determining age and length at puberty...')
         if self.E_Hp >= self.E_Hj:
             # puberty after metamorphosis
             self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_j)
-            #print(self.a_p, self.L_p, self.L_i, self.L_m, self.L_T)
         else:
             # puberty before metamorphosis
             self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
@@ -329,9 +355,6 @@ class Model(object):
             if verbose:
                 print('Cannot determine age and length at puberty.')
             return
-        self.a_99 = self.a_p - numpy.log(1 - (0.99*self.L_i - self.L_p)/(self.L_i - self.L_p))/self.r_B
-        p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kap + p_T_per_kap)*self.s_M + p_M_per_kap*self.L_i)/(E_m + E_G_per_kap)
-        self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
         self.valid = True
 
     def writeFABMConfiguration(self, path, name='deb', model='deb/population'):
@@ -386,7 +409,7 @@ class Model(object):
         assert f >= 0. and f <= 1.
         assert c_T > 0.
         if self.cmodel is not None:
-            result = self.cmodel.integrate(n, delta_t, nsave=nsave, c_T=c_T, f=f)
+            result = self.cmodel.integrate(n, delta_t, nsave=nsave, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
             return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
 
         kap = self.kap
