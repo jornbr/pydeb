@@ -20,7 +20,75 @@ except ImportError:
 
 import scipy.integrate
 
-primary_parameters = 'p_Am', 'v', 'p_M', 'p_T', 'kap', 'E_G', 'E_Hb', 'E_Hp', 'E_Hj', 'k_J', 'h_a', 's_G', 'kap_R', 'kap_X'
+primary_parameters = 'T_A', 'p_Am', 'F_m', 'kap_X', 'kap_P', 'v', 'kap', 'kap_R', 'p_M', 'p_T', 'k_J', 'E_G', 'E_Hb', 'E_Hx', 'E_Hj', 'E_Hp', 'h_a', 's_G', 't_0'
+
+implied_properties = 'L_b', 'L_p', 'L_i', 'a_b', 'a_p', 'a_99', 'E_0', 'E_m', 'r_B', 'R_i'
+
+long_names = {
+    'T_A': 'Arrhenius temperature',
+    'p_Am': '{p_Am}, specific assimilation flux',
+    'F_m': '{F_m}, maximum specific searching rate',
+    'kap_X': 'digestion efficiency (fraction of food to reserve)',
+    'kap_P': 'faecation efficiency (fraction of food to faeces)',
+    'v': 'energy conductance',
+    'kap': 'allocation fraction to soma',
+    'kap_R': 'reproduction efficiency',
+    'p_M': '[p_M], volume-specific somatic maintenance',
+    'p_T': 'p_T}, surface-specific somatic maintenance',
+    'k_J': 'maturity maintenance rate coefficient',
+    'E_G': '[E_G], specific cost for structure',
+    'E_Hb': 'maturity at birth',
+    'E_Hj': 'maturity at metamorphosis',
+    'E_Hx': 'maturity at weaning/fledgling',
+    'E_Hp': 'maturity at puberty',
+    'h_a': 'Weibull aging acceleration',
+    's_G': 'Gompertz stress coefficient',
+    't_0': 'time at start of development',
+    'L_b': 'structural length at birth',
+    'L_p': 'structural length at puberty',
+    'L_i': 'ultimate structural length',
+    'a_b': 'age at birth',
+    'a_p': 'age at puberty',
+    'a_99': 'age when reaching 99% of ultimate structural length',
+    'R_i': 'ultimate reproduction rate',
+    'r_B': 'von Bertalanffy growth rate',
+    'E_m': '[E_m], reserve capacity',
+    'E_0': 'initial reserve',
+    's_M': 'acceleration at metamorphosis',
+}
+
+units = {
+    'T_A': 'K',
+    'p_Am': 'J/d.cm^2',
+    'F_m': 'l/d.cm^2',
+    'kap_X': '-',
+    'kap_P': '-',
+    'v': 'cm/d',
+    'kap': '-',
+    'kap_R': '-',
+    'p_M': 'J/d.cm^3',
+    'p_T': 'J/d.cm^2',
+    'k_J': '1/d',
+    'E_G': 'J/cm^3',
+    'E_Hb': 'J',
+    'E_Hj': 'J',
+    'E_Hx': 'J',
+    'E_Hp': 'J',
+    'h_a': '1/d^2',
+    's_G': '-',
+    't_0': 'd',
+    'L_b': 'cm',
+    'L_p': 'cm',
+    'L_i': 'cm',
+    'a_b': 'd',
+    'a_p': 'd',
+    'a_99': 'd',
+    'R_i': '1/d',
+    'r_B': '1/d',
+    'E_m': 'J/cm^3',
+    'E_0': 'J',
+    's_M': '-',
+}
 
 class Model(object):
     def __init__(self, type='abj'):
@@ -243,7 +311,8 @@ class Model(object):
         if cmodel is not None:
             self.cmodel = cmodel.Model()
             for parameter in primary_parameters:
-                setattr(self.cmodel, parameter, getattr(self, parameter))
+                if hasattr(self.cmodel, parameter):
+                    setattr(self.cmodel, parameter, getattr(self, parameter))
             get_birth_state = self.cmodel.get_birth_state
             find_maturity = self.cmodel.find_maturity
             find_maturity_v1 = self.cmodel.find_maturity_v1
@@ -340,6 +409,10 @@ class Model(object):
         self.L_i = (self.L_m - self.L_T)*self.s_M
         self.a_99 = self.a_j - numpy.log(1 - (0.99*self.L_i - self.L_j)/(self.L_i - self.L_j))/self.r_B
         p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kap + p_T_per_kap)*self.s_M + p_M_per_kap*self.L_i)/(E_m + E_G_per_kap)
+        if self.k_J * self.E_Hp > (1 - kap) * p_C_i:
+            if verbose:
+                print('Cannot reach puberty.')
+            return
         self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
         max_E_H = (1 - kap) * p_C_i / self.k_J
 
