@@ -18,8 +18,6 @@ except ImportError:
         print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
         cmodel = None
 
-import scipy.integrate
-
 primary_parameters = 'T_A', 'p_Am', 'F_m', 'kap_X', 'kap_P', 'v', 'kap', 'kap_R', 'p_M', 'p_T', 'k_J', 'E_G', 'E_Hb', 'E_Hx', 'E_Hj', 'E_Hp', 'h_a', 's_G', 't_0'
 
 implied_properties = 'L_b', 'L_p', 'L_i', 'a_b', 'a_p', 'a_99', 'E_0', 'E_m', 'r_B', 'R_i'
@@ -220,17 +218,20 @@ class Model(object):
         v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kappa = 1-kap
 
-        def error_in_E(p, delta_t):
-            if not isinstance(p, float):
-                p = float(numpy.asscalar(p))
-            E_0 = 10.**p
-            state = get_birth_state(E_0, delta_t)
-            if state is None:
-                return numpy.inf
-            a_b, E_b, L_b = state
-            ssq = (E_b/L_b**3 - E_m)**2
-            #print('E_0 = %.3g J, a_b = %.3f d, L_b = %.3f cm - SSQ = %s' % (E_0, a_b, L_b, ssq))
-            return ssq
+        def get_E_0(log10_E_0_left, log10_E_0_right, delta_t):
+            import scipy.optimize 
+            def error_in_E(log10_E_0):
+                if not isinstance(log10_E_0, float):
+                    p = float(numpy.asscalar(log10_E_0))
+                a_b, E_b, L_b = get_birth_state(10.**log10_E_0, delta_t)
+                if a_b == -1:
+                    return numpy.inf
+                ssq = (E_b/L_b**3 - E_m)**2
+                return ssq
+            log10_E_0 = scipy.optimize.minimize_scalar(error_in_E, bracket=(log10_E_0_left, log10_E_0_right)).x
+            #log10_E_0 = scipy.optimize.fmin(error_in_E, 0.5 * (log10_E_0_left + log10_E_0_right), disp=False) #, initial_simplex=(log10_E_0_left, log10_E_0_right)
+            a_b, _, L_b = get_birth_state(10.**log10_E_0, delta_t)
+            return log10_E_0, a_b, L_b
 
         def get_birth_state(E_0, delta_t=1.):
             t, E, L, E_H = 0., float(E_0), 0., 0.
@@ -251,7 +252,7 @@ class Model(object):
                 E_H += delta_t * dE_H
                 t += delta_t
                 if E < 0 or dL < 0:
-                    return
+                    return -1, -1, -1
             return t, E, L
 
         def find_maturity(L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
@@ -317,6 +318,7 @@ class Model(object):
             find_maturity = self.cmodel.find_maturity
             find_maturity_v1 = self.cmodel.find_maturity_v1
             find_maturity_foetus = self.cmodel.find_maturity_foetus
+            get_E_0 = self.cmodel.get_E_0
 
         if self.type in ('stf', 'stx'):
             # foetal development
@@ -331,11 +333,10 @@ class Model(object):
             self.a_b, self.L_b, self.E_0 = birth_state
         else:
             # egg development
-            import scipy.optimize
             if E_0_ini is None:
                 E_0_ini = max(E_Hb, E_G*L_m**3)
             for i in range(10):
-                if get_birth_state(E_0_ini) is not None:
+                if get_birth_state(E_0_ini)[0] >= 0:
                     break
                 E_0_ini *= 10
             else:
@@ -345,33 +346,22 @@ class Model(object):
 
             if verbose:
                 print('Determining cost of an egg and state at birth...')
-            p = numpy.log10(E_0_ini),
-            bracket = (p[0], p[0]+1)
-            initial_simplex = None
+            log10_E_0 = numpy.log10(E_0_ini)
+            log10_E_0_left, log10_E_0_right = log10_E_0, log10_E_0 + 1
             for delta_t in (1., 0.1, 0.01, 0.001):
-                if True:
-                    p_new = scipy.optimize.minimize_scalar(error_in_E, bracket=bracket, args=(delta_t, )).x,
-                    step = min(abs(p_new[0] - p[0])/10, 1.)
-                    bracket = (p_new[0] - step, p_new[0] + step,)
-                else:
-                    p_new = scipy.optimize.fmin(error_in_E, p, args=(delta_t, ), disp=False) #, initial_simplex=initial_simplex
-                    step = min(abs(p_new[0] - p[0])/10, 1.)
-                    initial_simplex = numpy.array(((p_new[0] - step, ), (p_new[0] + step, )))
-                p = p_new
-                E_0 = 10.**p[0]
-
-                # Stop if we have the time of birth at 1 % accuracy
-                birth_state = get_birth_state(E_0, delta_t=delta_t)
-                if birth_state is None:
+                log10_E_0_new, a_b, L_b = get_E_0(log10_E_0_left, log10_E_0_right, delta_t)
+                if a_b <= 0:
                     if verbose:
                         print('Unable to determine cost of an egg (E_0).')
                     return
-                if delta_t < birth_state[0]*0.01:
-                    break
-                #print(E_0, birth_state)
+                step = min(abs(log10_E_0_new - log10_E_0)/10, 1.)
+                log10_E_0, log10_E_0_left, log10_E_0_right = log10_E_0_new, log10_E_0_new - step, log10_E_0_new + step
 
-            self.E_0 = E_0
-            self.a_b, _, self.L_b = birth_state
+                # Stop if we have the time of birth at 1 % accuracy
+                if delta_t < a_b * 0.01:
+                    break
+
+            self.E_0, self.a_b, self.L_b = 10.**log10_E_0, a_b, L_b
 
         self.L_m = L_m
         self.L_T = L_T
@@ -720,7 +710,6 @@ class HTMLGenerator(object):
 
         return '\n'.join(strings)
 
-#scipy.integrate.
 if __name__ == '__main__':
     model = Model()
     import argparse

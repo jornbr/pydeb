@@ -1,11 +1,28 @@
 cimport cython
 cimport numpy
+from numpy.math cimport INFINITY
 
 from libc.math cimport exp
+from optimize cimport Function, optimize
 
 ctypedef numpy.double_t DTYPE_t
 
 numpy.import_array()
+
+cdef class error_in_E(Function):
+    cdef double delta_t
+    cdef Model model
+    cdef double E_m
+
+    @cython.cdivision(True)
+    cdef double evaluate(error_in_E self, double x):
+        cdef double a_b, E_b, L_b 
+        E_0 = 10.**x
+        a_b, E_b, L_b = self.model.get_birth_state(E_0, self.delta_t)
+        if a_b == -1.:
+            return INFINITY
+        ssq = (E_b / (L_b * L_b * L_b) - self.E_m)**2
+        return ssq
 
 cdef class Model:
     cdef public double v
@@ -31,7 +48,17 @@ cdef class Model:
     cdef public double s_M
 
     @cython.cdivision(True)
-    def get_birth_state(Model self, double E_0, double delta_t=1.):
+    def get_E_0(Model self, double log10_E_0_left, double log10_E_0_right, double delta_t):
+        cdef error_in_E func = error_in_E()
+        func.model = self
+        func.delta_t = delta_t
+        func.E_m = self.p_Am/self.v
+        log10_E_0 = optimize(func, log10_E_0_left, log10_E_0_right)
+        a_b, E_b, L_b = self.get_birth_state(10.**log10_E_0, delta_t)
+        return log10_E_0, a_b, L_b
+
+    @cython.cdivision(True)
+    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t=1.):
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
         cdef double L2, L3, denom, p_C
@@ -70,6 +97,7 @@ cdef class Model:
                     done = 2
         if done == 1:
             return t, E, L
+        return -1, -1, -1
 
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
