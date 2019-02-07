@@ -290,7 +290,7 @@ class Model(object):
 
             if True:
                 t = 0.
-                E_H = self.E_Hb
+                E_H = E_H_ini
                 done = False
                 while not done:
                     dE_H = prefactor*exp(r*t) - k_J*E_H

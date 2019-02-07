@@ -269,7 +269,7 @@ cdef class Model:
         prefactor = (1. - kap)*V_ini*E_m*(v*E_G/L_ini + p_M + p_T/L_ini)/(E_G + kap*E_m)
 
         t = 0.
-        E_H = self.E_Hb
+        E_H = E_H_ini
         with nogil:
             done = 0
             while done == 0:
