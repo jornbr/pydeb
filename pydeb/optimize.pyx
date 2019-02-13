@@ -1,79 +1,10 @@
+# Brent's method based on scipy.optimize.optimize (minimize_scalar with method='Brent')
+
 cimport cython
 
 cdef class Function:
     cdef double evaluate(Function self, double x):
         return 0
-
-@cython.cdivision(True)
-cdef (double, double, double, double, double, double) bracket(Function func, double xa, double xb, double grow_limit=110.0, int maxiter=1000):
-    cdef double _gold = 1.618034  # golden ratio: (1.0+sqrt(5.0))/2.0
-    cdef double _verysmall_num = 1e-21
-    cdef double fa, fb, fc
-    cdef double xc
-    cdef double tmp1, tmp2, val
-    cdef int iter
-    cdef double denom, w, fw, wlim
-
-    fa = func.evaluate(xa)
-    fb = func.evaluate(xb)
-    if (fa < fb):                      # Switch so fa > fb
-        xa, xb = xb, xa
-        fa, fb = fb, fa
-    xc = xb + _gold * (xb - xa)
-    fc = func.evaluate(xc)
-    iter = 0
-    while (fc < fb):
-        tmp1 = (xb - xa) * (fb - fc)
-        tmp2 = (xb - xc) * (fb - fa)
-        val = tmp2 - tmp1
-        if abs(val) < _verysmall_num:
-            denom = 2.0 * _verysmall_num
-        else:
-            denom = 2.0 * val
-        w = xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom
-        wlim = xb + grow_limit * (xc - xb)
-        if iter > maxiter:
-            iter = -1
-            exit
-        iter += 1
-        if (w - xc) * (xb - w) > 0.0:
-            fw = func.evaluate(w)
-            if (fw < fc):
-                xa = xb
-                xb = w
-                fa = fb
-                fb = fw
-                exit
-            elif (fw > fb):
-                xc = w
-                fc = fw
-                exit
-            w = xc + _gold * (xc - xb)
-            fw = func.evaluate(w)
-        elif (w - wlim)*(wlim - xc) >= 0.0:
-            w = wlim
-            fw = func.evaluate(w)
-        elif (w - wlim)*(xc - w) > 0.0:
-            fw = func.evaluate(w)
-            if (fw < fc):
-                xb = xc
-                xc = w
-                w = xc + _gold * (xc - xb)
-                fb = fc
-                fc = fw
-                fw = func.evaluate(w)
-        else:
-            w = xc + _gold * (xc - xb)
-            fw = func.evaluate(w)
-        xa = xb
-        xb = xc
-        xc = w
-        fa = fb
-        fb = fc
-        fc = fw
-    if iter == -1:
-        raise RuntimeError("Too many iterations.")
-    return xa, xb, xc, fa, fb, fc
 
 @cython.cdivision(True)
 cdef double optimize(Function func, double xa, double xb):
@@ -192,3 +123,74 @@ cdef double optimize(Function func, double xa, double xb):
     #################################
 
     return x
+
+@cython.cdivision(True)
+cdef (double, double, double, double, double, double) bracket(Function func, double xa, double xb, double grow_limit=110.0, int maxiter=1000):
+    cdef double _gold = 1.618034  # golden ratio: (1.0+sqrt(5.0))/2.0
+    cdef double _verysmall_num = 1e-21
+    cdef double fa, fb, fc
+    cdef double xc
+    cdef double tmp1, tmp2, val
+    cdef int iter
+    cdef double denom, w, fw, wlim
+
+    fa = func.evaluate(xa)
+    fb = func.evaluate(xb)
+    if (fa < fb):                      # Switch so fa > fb
+        xa, xb = xb, xa
+        fa, fb = fb, fa
+    xc = xb + _gold * (xb - xa)
+    fc = func.evaluate(xc)
+    iter = 0
+    while (fc < fb):
+        tmp1 = (xb - xa) * (fb - fc)
+        tmp2 = (xb - xc) * (fb - fa)
+        val = tmp2 - tmp1
+        if abs(val) < _verysmall_num:
+            denom = 2.0 * _verysmall_num
+        else:
+            denom = 2.0 * val
+        w = xb - ((xb - xc) * tmp2 - (xb - xa) * tmp1) / denom
+        wlim = xb + grow_limit * (xc - xb)
+        if iter > maxiter:
+            iter = -1
+            exit
+        iter += 1
+        if (w - xc) * (xb - w) > 0.0:
+            fw = func.evaluate(w)
+            if (fw < fc):
+                xa = xb
+                xb = w
+                fa = fb
+                fb = fw
+                exit
+            elif (fw > fb):
+                xc = w
+                fc = fw
+                exit
+            w = xc + _gold * (xc - xb)
+            fw = func.evaluate(w)
+        elif (w - wlim)*(wlim - xc) >= 0.0:
+            w = wlim
+            fw = func.evaluate(w)
+        elif (w - wlim)*(xc - w) > 0.0:
+            fw = func.evaluate(w)
+            if (fw < fc):
+                xb = xc
+                xc = w
+                w = xc + _gold * (xc - xb)
+                fb = fc
+                fc = fw
+                fw = func.evaluate(w)
+        else:
+            w = xc + _gold * (xc - xb)
+            fw = func.evaluate(w)
+        xa = xb
+        xb = xc
+        xc = w
+        fa = fb
+        fb = fc
+        fc = fw
+    if iter == -1:
+        raise RuntimeError("Too many iterations.")
+    return xa, xb, xc, fa, fb, fc
