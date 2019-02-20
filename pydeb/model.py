@@ -88,6 +88,44 @@ units = {
     's_M': '-',
 }
 
+temperature_correction = {
+    'T_A': 0,
+    'p_Am': 1,
+    'F_m': 1,
+    'kap_X': 0,
+    'kap_P': 0,
+    'v': 1,
+    'kap': 0,
+    'kap_R': 0,
+    'p_M': 1,
+    'p_T': 1,
+    'k_J': 1,
+    'E_G': 0,
+    'E_Hb': 0,
+    'E_Hj': 0,
+    'E_Hx': 0,
+    'E_Hp': 0,
+    'h_a': 2,
+    's_G': 0,
+    't_0': -1,
+    'L_b': 0,
+    'L_p': 0,
+    'L_i': 0,
+    'a_b': -1,
+    'a_p': -1,
+    'a_99': -1,
+    'R_i': 1,
+    'r_B': 1,
+    'E_m': 0,
+    'E_0': 0,
+    's_M': 0,
+}
+
+typified_models = {'std': 'standard DEB model',
+                   'stf': 'with foetal development (no egg)',
+                   'stx': 'with foetal development and optional preparation stage',
+                   'abj': 'optional acceleration between birth and metamorphosis'
+                   }
 class Model(object):
     def __init__(self, type='abj'):
         self.p_Am = None # {p_Am}, spec assimilation flux (J/d.cm^2)
@@ -104,6 +142,7 @@ class Model(object):
         self.s_G = None #Gompertz stress coefficient
         self.kap_R = None # reproductive efficiency
         self.kap_X = None # digestion efficiency of food to reserve
+        self.T_A = None # Arrhenius temperature
         self.type = type # std, abj, stf, stx
 
         # stf
@@ -421,6 +460,10 @@ class Model(object):
                 print('Cannot determine age and length at puberty.')
             return
         self.valid = True
+
+    def getTemperatureCorrection(self, T):
+        # T is temperature in Celsius
+        return numpy.exp(self.T_A/293.15 - self.T_A/(273.15 + T))
 
     def writeFABMConfiguration(self, path, name='deb', model='deb/population'):
         if not self.initialized:
