@@ -1,13 +1,8 @@
 cimport cython
-cimport numpy
 from numpy.math cimport INFINITY
 
 from libc.math cimport exp, log10
 from optimize cimport Function, optimize
-
-ctypedef numpy.double_t DTYPE_t
-
-numpy.import_array()
 
 cdef class error_in_E(Function):
     cdef double delta_t
@@ -102,11 +97,7 @@ cdef class Model:
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
-    def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0.0001):
-        cdef int nout = 1 if nsave == 0 else (n/nsave)+1
-        cdef numpy.npy_intp *dims = [nout, 10]
-        cdef numpy.ndarray[DTYPE_t, ndim=2] result = numpy.PyArray_EMPTY(2, dims, numpy.NPY_DOUBLE, 0)
-
+    def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0.):
         cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
         cdef double E_m, L_m, L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
         cdef double L2, L3, s, p_C, p_R, denom
@@ -212,8 +203,6 @@ cdef class Model:
                     if nsave == 0:
                         break
                     isave += 1
-
-        return result
 
     @cython.cdivision(True)
     def find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):

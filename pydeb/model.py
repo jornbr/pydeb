@@ -474,7 +474,8 @@ class Model(object):
         assert f >= 0. and f <= 1.
         assert c_T > 0.
         if self.cmodel is not None:
-            result = self.cmodel.integrate(n, delta_t, nsave=nsave, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
+            result = numpy.empty((int(n/nsave) + 1, 10))
+            self.cmodel.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
             return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
 
         kap = self.kap
