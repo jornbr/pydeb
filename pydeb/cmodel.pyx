@@ -2,7 +2,7 @@ cimport cython
 cimport numpy
 from numpy.math cimport INFINITY
 
-from libc.math cimport exp
+from libc.math cimport exp, log10
 from optimize cimport Function, optimize
 
 ctypedef numpy.double_t DTYPE_t
@@ -21,7 +21,7 @@ cdef class error_in_E(Function):
         a_b, E_b, L_b = self.model.get_birth_state(E_0, self.delta_t)
         if a_b == -1.:
             return INFINITY
-        ssq = (E_b / (L_b * L_b * L_b) - self.E_m)**2
+        ssq = (log10(E_b) - 3 * log10(L_b) - log10(self.E_m))**2
         return ssq
 
 cdef class Model:
@@ -102,8 +102,9 @@ cdef class Model:
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
-    def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1., int devel_state_ini=1):
-        cdef numpy.npy_intp *dims = [(n/nsave)+1, 10]
+    def integrate(Model self, int n, double delta_t, int nsave, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0.0001):
+        cdef int nout = 1 if nsave == 0 else (n/nsave)+1
+        cdef numpy.npy_intp *dims = [nout, 10]
         cdef numpy.ndarray[DTYPE_t, ndim=2] result = numpy.PyArray_EMPTY(2, dims, numpy.NPY_DOUBLE, 0)
 
         cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
@@ -111,6 +112,7 @@ cdef class Model:
         cdef double L2, L3, s, p_C, p_R, denom
         cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
         cdef int i, isave, devel_state
+        cdef bint save
 
         kap = self.kap
         v = self.v*c_T
@@ -141,10 +143,11 @@ cdef class Model:
 
         dE_R = 0.
         with nogil:
+            isave = 0
             E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
-            for i in range(n+1):
-                isave = i/nsave
-                if i % nsave == 0:
+            for i in range(n + 1):
+                save = S < S_crit if nsave == 0 else i % nsave == 0
+                if save:
                     result[isave, 0] = E
                     result[isave, 1] = L
                     result[isave, 2] = E_H
@@ -193,19 +196,22 @@ cdef class Model:
                     cumR += delta_t * S * dE_R / E_0
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
-                dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
+                dQ = max((Q/L_m3*s_G + h_a)*max(0., p_C)/E_m, -Q/(delta_t+1e-8))
                 dH = Q
-                dS = 0. if L3 <= 0. or S<1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
+                dS = 0. if L3 <= 0. or S < 0 else -min(1. / (delta_t + 1e-8), H / L3) * S
 
                 # Update state variables related to survival
                 Q += delta_t * dQ     # damage inducing compounds (1/d2)
-                H += delta_t * dH     # hazard rate (1/d)
+                H += delta_t * dH     # hazard rate (1/d) multiplied by structural volume
                 S += delta_t * dS     # survival (-)
                 cumt += delta_t * S   # average life span (d)
 
                 # Save diagnostics
-                if i % nsave == 0:
+                if save:
                     result[isave, 9] = dE_R/E_0
+                    if nsave == 0:
+                        break
+                    isave += 1
 
         return result
 

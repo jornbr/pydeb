@@ -179,7 +179,7 @@ class Model(object):
         self.valid = False
         self.cmodel = None
 
-    def initialize(self, E_0_ini=None, verbose=False):
+    def initialize(self, E_0_ini=0., verbose=False):
         assert self.p_T >= 0.
         assert self.p_M >= 0.
         assert self.p_Am >= 0.
@@ -333,8 +333,10 @@ class Model(object):
             self.a_b, self.L_b, self.E_0 = birth_state
         else:
             # egg development
-            if E_0_ini is None:
-                E_0_ini = max(E_Hb, E_G*L_m**3)
+            # At least E_Hb / (1 - kap) must have been spent during embryo development to reach E_Hb.
+            # In fact, energy expenditure MUST be more because of maturity maintenance and because there
+            # needs to be reserve left over at time of hatching.
+            E_0_ini = max(E_0_ini, 2. * E_Hb / (1 - kap))
             for i in range(10):
                 if get_birth_state(E_0_ini)[0] >= 0:
                     break
