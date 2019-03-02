@@ -7,6 +7,8 @@ import urllib
 
 import numpy
 
+import scipy.optimize
+
 try:
     import cmodel
 except ImportError:
@@ -218,7 +220,7 @@ class Model(object):
         self.valid = False
         self.cmodel = None
 
-    def initialize(self, E_0_ini=0., verbose=False):
+    def initialize(self, E_0_ini=0., verbose=False, precision=0.001):
         assert self.p_T >= 0.
         assert self.p_M >= 0.
         assert self.p_Am >= 0.
@@ -256,21 +258,6 @@ class Model(object):
         p_T_per_kap = p_T/kap
         v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kappa = 1-kap
-
-        def get_E_0(log10_E_0_left, log10_E_0_right, delta_t):
-            import scipy.optimize 
-            def error_in_E(log10_E_0):
-                if not isinstance(log10_E_0, float):
-                    p = float(numpy.asscalar(log10_E_0))
-                a_b, E_b, L_b = get_birth_state(10.**log10_E_0, delta_t)
-                if a_b == -1:
-                    return numpy.inf
-                ssq = (E_b/L_b**3 - E_m)**2
-                return ssq
-            log10_E_0 = scipy.optimize.minimize_scalar(error_in_E, bracket=(log10_E_0_left, log10_E_0_right)).x
-            #log10_E_0 = scipy.optimize.fmin(error_in_E, 0.5 * (log10_E_0_left + log10_E_0_right), disp=False) #, initial_simplex=(log10_E_0_left, log10_E_0_right)
-            a_b, _, L_b = get_birth_state(10.**log10_E_0, delta_t)
-            return log10_E_0, a_b, L_b
 
         def get_birth_state(E_0, delta_t=1.):
             t, E, L, E_H = 0., float(E_0), 0., 0.
@@ -357,56 +344,71 @@ class Model(object):
             find_maturity = self.cmodel.find_maturity
             find_maturity_v1 = self.cmodel.find_maturity_v1
             find_maturity_foetus = self.cmodel.find_maturity_foetus
-            get_E_0 = self.cmodel.get_E_0
 
+        # Compute maximum catabolic flux (before any acceleration)
+        # This flux needs to be able to at lesat support [= pay maintenance for] maturity at birth.
+        L_i = L_m - L_T
+        p_C_i = L_i * L_i * E_m * ((v * E_G_per_kap + p_T_per_kap) + p_M_per_kap * L_i) / (E_m + E_G_per_kap)
+        if k_J * E_Hb > (1 - kap) * p_C_i:
+            if verbose:
+                print('Cannot reach maturity at birth.')
+            return
+
+        delta_t = 1.
         if self.type in ('stf', 'stx'):
             # foetal development
-            for delta_t in (1., 0.1, 0.01, 0.001):
+            while 1:
                 birth_state = find_maturity_foetus(self.E_Hb, delta_t)
                 if birth_state is None:
                     if verbose:
                         print('Unable to determine age/length at birth.')
                     return
-                if delta_t < birth_state[0] * 0.01:
+                # Stop if we have the time of birth at desired accuracy
+                # (assume linear interpolation within Euler time step results in accuracy of 0.1 delta_t)
+                a_b, L_b, E_0 = birth_state
+                if delta_t < a_b * precision * 10:
                     break
-            self.a_b, self.L_b, self.E_0 = birth_state
+                delta_t = a_b * precision * 5
         else:
             # egg development
             # At least E_Hb / (1 - kap) must have been spent during embryo development to reach E_Hb.
             # In fact, energy expenditure MUST be more because of maturity maintenance and because there
             # needs to be reserve left over at time of hatching.
-            E_0_ini = max(E_0_ini, 2. * E_Hb / (1 - kap))
-            for i in range(10):
-                if get_birth_state(E_0_ini)[0] >= 0:
+            E_0_min = E_0_max = E_Hb / (1 - kap)
+            assert get_birth_state(E_0_min, delta_t)[2] <= E_Hb
+            for _ in range(10):
+                E_0_max *= 10
+                if get_birth_state(E_0_max, delta_t)[2] >= E_Hb:
                     break
-                E_0_ini *= 10
             else:
                 if verbose:
-                    print('Cannot find valid initial estimate for E_0 (tried up to %s)' % E_0_ini)
+                    print('Cannot find valid initial estimate for E_0 (tried up to %s)' % E_0_max)
                 return
 
+            def root(E_0, delta_t):
+                _, _, E_H = get_birth_state(E_0, delta_t)
+                return E_H - E_Hb 
             if verbose:
                 print('Determining cost of an egg and state at birth...')
-            log10_E_0 = numpy.log10(E_0_ini)
-            log10_E_0_left, log10_E_0_right = log10_E_0, log10_E_0 + 1
-            for delta_t in (1., 0.1, 0.01, 0.001):
-                log10_E_0_new, a_b, L_b = get_E_0(log10_E_0_left, log10_E_0_right, delta_t)
-                if a_b <= 0:
-                    if verbose:
-                        print('Unable to determine cost of an egg (E_0).')
-                    return
-                step = min(abs(log10_E_0_new - log10_E_0)/10, 1.)
-                log10_E_0, log10_E_0_left, log10_E_0_right = log10_E_0_new, log10_E_0_new - step, log10_E_0_new + step
+            while 1:
+                E_0 = scipy.optimize.brentq(root, E_0_min, E_0_max, rtol=precision, args=(delta_t,))
+                E_0_max = 2 * E_0
+                a_b, L_b, _ = get_birth_state(E_0, delta_t)
 
-                # Stop if we have the time of birth at 1 % accuracy
-                if delta_t < a_b * 0.01:
+                # Stop if we have the time of birth at desired accuracy
+                # (assume linear interpolation within Euler time step results in accuracy of 0.1 delta_t)
+                if delta_t < a_b * precision * 10:
                     break
+                delta_t = a_b * precision * 5
 
-            self.E_0, self.a_b, self.L_b = 10.**log10_E_0, a_b, L_b
+        self.E_0, self.a_b, self.L_b = E_0, a_b, L_b
 
         self.L_m = L_m
         self.L_T = L_T
         self.E_m = E_m
+
+        # Set time step for integration to metamorphosis and puberty
+        delta_t = max(precision * 10, self.a_b * precision * 10) * 2
 
         self.r_B = self.p_M/3/(E_m*kap + E_G) # checked against p52, note f=1
         L_i_min = self.L_m - self.L_T # not counting acceleration!
@@ -427,7 +429,7 @@ class Model(object):
         if self.E_Hj > self.E_Hb:
             if verbose:
                 print('Determining age and length at metamorphosis...')
-            self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
+            self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=delta_t, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
             if self.a_j is None:
                 if verbose:
                     print('Cannot determine age and length at metamorphosis.')
@@ -445,16 +447,15 @@ class Model(object):
                 print('Cannot reach puberty.')
             return
         self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
-        max_E_H = (1 - kap) * p_C_i / self.k_J
 
         if verbose:
             print('Determining age and length at puberty...')
         if self.E_Hp >= self.E_Hj:
             # puberty after metamorphosis
-            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=max(0.01, self.a_b/100), s_M=self.s_M, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_j)
+            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=delta_t, s_M=self.s_M, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_j)
         else:
             # puberty before metamorphosis
-            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=max(0.01, self.a_b/100), t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
+            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=delta_t, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
         if self.a_p is None:
             if verbose:
                 print('Cannot determine age and length at puberty.')

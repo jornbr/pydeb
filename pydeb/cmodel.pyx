@@ -1,7 +1,7 @@
 cimport cython
 from numpy.math cimport INFINITY
 
-from libc.math cimport exp, log10
+from libc.math cimport exp, log10, sqrt
 from optimize cimport Function, optimize
 
 cdef class error_in_E(Function):
@@ -53,7 +53,7 @@ cdef class Model:
         return log10_E_0, a_b, L_b
 
     @cython.cdivision(True)
-    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t=1.):
+    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t):
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
         cdef double L2, L3, denom, p_C
@@ -67,7 +67,7 @@ cdef class Model:
         cdef double v_E_G_plus_P_T_per_kap = (self.v*self.E_G + self.p_T)/self.kap
         cdef double v = self.v
         cdef double k_J = self.k_J
-        cdef double E_Hb = self.E_Hb
+        cdef double E_m = self.p_Am/self.v
 
         cdef double dt = delta_t
 
@@ -81,8 +81,13 @@ cdef class Model:
                 dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
                 dE = -p_C
                 dE_H = one_minus_kap*p_C - k_J*E_H
-                if E_H + dt * dE_H > E_Hb:
-                    dt = (E_Hb - E_H)/dE_H
+                if E + dt * dE < E_m * (L + dt * dL)**3:
+                    p = p_C / (dL * E_m)
+                    q = - (E + p_C * L / dL) / E_m
+                    c1 = -q/2
+                    c2 = sqrt(q*q/4 + p*p*p/27)
+                    L_new = (c1 + c2)**(1./3.) + -(c2 - c1)**(1./3.)
+                    dt = (L_new - L) / dL
                     done = 1
                 t += dt
                 E += dt * dE
@@ -91,7 +96,7 @@ cdef class Model:
                 if E < 0 or dL < 0:
                     done = 2
         if done == 1:
-            return t, E, L
+            return t, L, E_H
         return -1, -1, -1
 
     @cython.cdivision(True)
