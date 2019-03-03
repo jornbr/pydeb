@@ -81,7 +81,10 @@ cdef class Model:
                 dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
                 dE = -p_C
                 dE_H = one_minus_kap*p_C - k_J*E_H
-                if E + dt * dE < E_m * (L + dt * dL)**3:
+                if dL <= 0:
+                    dt = (E - L**3 * E_m) / p_C
+                    done = 1
+                elif E + dt * dE < E_m * (L + dt * dL)**3:
                     p = p_C / (dL * E_m)
                     q = - (E + p_C * L / dL) / E_m
                     c1 = -q/2
@@ -93,11 +96,7 @@ cdef class Model:
                 E += dt * dE
                 L += dt * dL
                 E_H += dt * dE_H
-                if E < 0 or dL < 0:
-                    done = 2
-        if done == 1:
-            return t, L, E_H
-        return -1, -1, -1
+        return t, L, E_H
 
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
