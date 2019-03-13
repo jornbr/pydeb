@@ -351,7 +351,7 @@ class Model(object):
         p_C_i = L_i * L_i * E_m * ((v * E_G_per_kap + p_T_per_kap) + p_M_per_kap * L_i) / (E_m + E_G_per_kap)
         if k_J * E_Hb > (1 - kap) * p_C_i:
             if verbose:
-                print('Cannot reach maturity at birth.')
+                print('Cannot reach maturity of %s J at birth (maximum reachable is %s J).' % (E_Hb, (1 - kap) * p_C_i / k_J))
             return
 
         delta_t = 1.
@@ -439,23 +439,23 @@ class Model(object):
         self.s_M = self.L_j / self.L_b
         if self.cmodel is not None:
             self.cmodel.s_M = self.s_M
-        self.L_i = (self.L_m - self.L_T)*self.s_M
-        self.a_99 = self.a_j - numpy.log(1 - (0.99*self.L_i - self.L_j)/(self.L_i - self.L_j))/self.r_B
-        p_C_i = self.L_i*self.L_i*E_m*((v*E_G_per_kap + p_T_per_kap)*self.s_M + p_M_per_kap*self.L_i)/(E_m + E_G_per_kap)
-        if self.k_J * self.E_Hp > (1 - kap) * p_C_i:
+        self.L_i = (self.L_m - self.L_T) * self.s_M
+        self.a_99 = self.a_j - numpy.log(1 - (0.99 * self.L_i - self.L_j) / (self.L_i - self.L_j)) / self.r_B
+        p_C_i = self.L_i * self.L_i * E_m * ((v * E_G_per_kap + p_T_per_kap) * self.s_M + p_M_per_kap * self.L_i) / (E_m + E_G_per_kap)
+        if k_J * self.E_Hp > (1 - kap) * p_C_i:
             if verbose:
-                print('Cannot reach puberty.')
+                print('Cannot reach maturity of %s J at puberty (maximum reachable is %s J).' % (self.E_Hp, (1 - kap) * p_C_i / k_J))
             return
-        self.R_i = ((1-kap)*p_C_i - self.k_J*self.E_Hp)*self.kap_R/self.E_0
+        self.R_i = self.kap_R * ((1 - kap) * p_C_i - k_J * self.E_Hp) / self.E_0
 
         if verbose:
             print('Determining age and length at puberty...')
         if self.E_Hp >= self.E_Hj:
             # puberty after metamorphosis
-            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=delta_t, s_M=self.s_M, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_j)
+            self.a_p, self.L_p = find_maturity(self.L_j, self.E_Hj, self.E_Hp, delta_t=delta_t, s_M=self.s_M, t_max=min(100 * self.a_99, 365 * 200.), t_ini=self.a_j)
         else:
             # puberty before metamorphosis
-            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=delta_t, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
+            self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=delta_t, t_max=self.a_j, t_ini=self.a_b)
         if self.a_p is None:
             if verbose:
                 print('Cannot determine age and length at puberty.')
