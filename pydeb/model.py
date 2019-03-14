@@ -121,6 +121,7 @@ temperature_correction = {
     'E_m': 0,
     'E_0': 0,
     's_M': 0,
+    'del_M': 0,
 }
 
 typified_models = {'std': 'standard DEB model',
