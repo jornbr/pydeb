@@ -22,6 +22,8 @@ except ImportError:
 
 primary_parameters = 'T_A', 'p_Am', 'F_m', 'kap_X', 'kap_P', 'v', 'kap', 'kap_R', 'p_M', 'p_T', 'k_J', 'E_G', 'E_Hb', 'E_Hx', 'E_Hj', 'E_Hp', 'h_a', 's_G', 't_0'
 
+entry_parameters = 'del_M',
+
 implied_properties = 'L_b', 'L_p', 'L_i', 'a_b', 'a_p', 'a_99', 'E_0', 'E_m', 'r_B', 'R_i'
 
 long_names = {
@@ -55,6 +57,7 @@ long_names = {
     'E_m': '[E_m], reserve capacity',
     'E_0': 'initial reserve',
     's_M': 'acceleration at metamorphosis',
+    'del_M': 'shape coefficient (structural : physical length)',
 }
 
 units = {
@@ -88,6 +91,7 @@ units = {
     'E_m': 'J/cm^3',
     'E_0': 'J',
     's_M': '-',
+    'del_M': '-',
 }
 
 temperature_correction = {
