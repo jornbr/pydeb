@@ -133,6 +133,18 @@ typified_models = {'std': 'standard DEB model',
                    'stx': 'with foetal development and optional preparation stage',
                    'abj': 'optional acceleration between birth and metamorphosis'
                    }
+
+class ModelDict(object):
+    def __init__(self, model, c_T=1.):
+        self.model = model
+        self.c_T = c_T
+
+    def __getitem__(self, key):
+        return getattr(self.model, key) * self.c_T**temperature_correction[key]
+
+    def __contains__(self, key):
+        return hasattr(self.model, key)
+
 class Model(object):
     def __init__(self, type='abj'):
         self.p_Am = None # {p_Am}, spec assimilation flux (J/d.cm^2)
@@ -466,6 +478,9 @@ class Model(object):
                 print('Cannot determine age and length at puberty.')
             return
         self.valid = True
+
+    def evaluate(self, expression, c_T=1.):
+        return eval(expression, {}, ModelDict(self, c_T))
 
     def getTemperatureCorrection(self, T):
         # T is temperature in Celsius
