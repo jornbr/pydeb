@@ -209,7 +209,7 @@ cdef class Model:
                     isave += 1
 
     @cython.cdivision(True)
-    def find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
+    cpdef (double, double) find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
         cdef double r_B, E_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, one_minus_kap, k_J, v_E_G_plus_P_T_per_kap
         cdef double t, E_H
         cdef double L_i
@@ -244,10 +244,10 @@ cdef class Model:
         if done == 1:
             L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
             return t_ini + t, L
-        return None, None
+        return -1., -1.
 
     @cython.cdivision(True)
-    def find_maturity_v1(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double t_max=365000., double t_ini=0.):
+    cpdef (double, double) find_maturity_v1(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double t_max=365000., double t_ini=0.):
         cdef double E_m, v, kap, p_M, p_T, E_G, V_ini, r, prefactor, k_J
         cdef double t, E_H
         cdef int done
@@ -283,10 +283,10 @@ cdef class Model:
         if done == 1:
             L = L_ini*exp(r/3*t)
             return t_ini + t, L
-        return None, None
+        return -1., -1.
 
     @cython.cdivision(True)
-    def find_maturity_foetus(Model self, double E_H_target, double delta_t=1., double t_max=365000.):
+    cpdef (double, double, double) find_maturity_foetus(Model self, double E_H_target, double delta_t=1., double t_max=365000.):
         cdef double k_J, prefactor1, prefactor2
         cdef double t, E_H, E_0
         cdef int done
@@ -314,4 +314,47 @@ cdef class Model:
             p_C_int = (prefactor1 / 3 + prefactor2 * t / 4) * t * t * t / (1. - self.kap)
             E_0 = p_C_int + E
             return t, self.v * t / 3, E_0
-        return None
+        return -1., -1., -1.
+
+    @cython.cdivision(True)
+    cpdef (double, double) find_maturity_egg(Model self, double E_H_target, double delta_t, double t_max=365000.):
+        cdef double t, E, L, E_H
+        cdef double dE, dL, dE_H
+        cdef double L2, L3, denom, p_C
+
+        cdef int done
+
+        cdef double p_M_per_kap = self.p_M/self.kap
+        cdef double p_T_per_kap = self.p_T/self.kap
+        cdef double E_G_per_kap = self.E_G/self.kap
+        cdef double one_minus_kap = 1. - self.kap
+        cdef double v_E_G_plus_P_T_per_kap = (self.v*self.E_G + self.p_T)/self.kap
+        cdef double v = self.v
+        cdef double k_J = self.k_J
+        cdef double E_m = self.p_Am/self.v
+
+        cdef double dt = delta_t
+
+        t, E, L, E_H = 0., self.E_0, 0., 0.
+        with nogil:
+            done = 0
+            while done == 0:
+                L2 = L*L
+                L3 = L*L2
+                denom = E + E_G_per_kap*L3
+                p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
+                dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
+                dE = -p_C
+                dE_H = one_minus_kap*p_C - k_J*E_H
+                if E_H + delta_t * dE_H > E_H_target:
+                    delta_t = (E_H_target - E_H) / dE_H
+                    done = 1
+                t += dt
+                E += dt * dE
+                L += dt * dL
+                E_H += dt * dE_H
+                if t > t_max:
+                    done = 2
+        if done == 1:
+            return t, L
+        return -1., -1.

@@ -126,6 +126,9 @@ temperature_correction = {
     'E_0': 0,
     's_M': 0,
     'del_M': 0,
+    'mu_E': 0,
+    'w_E': 0,
+    'd_E': 0
 }
 
 typified_models = {'std': 'standard DEB model',
@@ -140,6 +143,8 @@ class ModelDict(object):
         self.c_T = c_T
 
     def __getitem__(self, key):
+        if not hasattr(self.model, key):
+            raise KeyError()
         return getattr(self.model, key) * self.c_T**temperature_correction[key]
 
     def __contains__(self, key):
@@ -236,6 +241,11 @@ class Model(object):
         self.initialized = False
         self.valid = False
         self.cmodel = None
+
+        self.mu_E = 5.5e5 # chemical potential of reserve (J/C-mol)
+        self.w_E = 23.9   # dry weight of reserve (g/C_mol)
+        self.d_E = 0.21   # specific density of reserve (g DM/cm3)
+        #self.WM_per_E = self.w_E / self.mu_E / self.d_E # cm3/J
 
     def initialize(self, E_0_ini=0., verbose=False, precision=0.001):
         assert self.p_T >= 0.
@@ -361,6 +371,7 @@ class Model(object):
             find_maturity = self.cmodel.find_maturity
             find_maturity_v1 = self.cmodel.find_maturity_v1
             find_maturity_foetus = self.cmodel.find_maturity_foetus
+            find_maturity_egg = self.cmodel.find_maturity_egg
 
         # Compute maximum catabolic flux (before any acceleration)
         # This flux needs to be able to at lesat support [= pay maintenance for] maturity at birth.
@@ -375,14 +386,13 @@ class Model(object):
         if self.type in ('stf', 'stx'):
             # foetal development
             while 1:
-                birth_state = find_maturity_foetus(self.E_Hb, delta_t)
-                if birth_state is None:
+                a_b, L_b, E_0 = find_maturity_foetus(self.E_Hb, delta_t)
+                if a_b == -1.:
                     if verbose:
                         print('Unable to determine age/length at birth.')
                     return
                 # Stop if we have the time of birth at desired accuracy
                 # (assume linear interpolation within Euler time step results in accuracy of 0.1 delta_t)
-                a_b, L_b, E_0 = birth_state
                 if delta_t < a_b * precision * 10:
                     break
                 delta_t = a_b * precision * 5
@@ -447,7 +457,7 @@ class Model(object):
             if verbose:
                 print('Determining age and length at metamorphosis...')
             self.a_j, self.L_j = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hj, delta_t=delta_t, t_max=min(100*a_99_max, 365*200.), t_ini=self.a_b)
-            if self.a_j is None:
+            if self.a_j == -1.:
                 if verbose:
                     print('Cannot determine age and length at metamorphosis.')
                 return
@@ -473,14 +483,39 @@ class Model(object):
         else:
             # puberty before metamorphosis
             self.a_p, self.L_p = find_maturity_v1(self.L_b, self.E_Hb, self.E_Hp, delta_t=delta_t, t_max=self.a_j, t_ini=self.a_b)
-        if self.a_p is None:
+        if self.a_p == -1.:
             if verbose:
                 print('Cannot determine age and length at puberty.')
             return
         self.valid = True
+        self.maturity_states = {
+            self.E_Hb: (self.a_b, self.L_b),
+            self.E_Hj: (self.a_j, self.L_j),
+            self.E_Hp: (self.a_p, self.L_p)
+        }
 
-    def evaluate(self, expression, c_T=1.):
-        return eval(expression, {}, ModelDict(self, c_T))
+    def ageAtMaturity(self, E_H, precision=0.001, c_T=1.):
+        if E_H not in self.maturity_states:
+            delta_t = max(precision * 10, self.a_b * precision * 10) * 2
+            tmax = min(100 * self.a_99, 365 * 200.)
+            if E_H < self.E_Hb:
+                # before birth
+                if self.type in ('stf', 'stx'):
+                    a, L, _ = self.cmodel.find_maturity_foetus(E_H, delta_t=delta_t, t_max=tmax)
+                else:
+                    a, L = self.cmodel.find_maturity_egg(E_H, delta_t=delta_t, t_max=tmax)
+            elif E_H < self.E_Hj:
+                # before metamophosis (i.e., during acceleration in V1 morph mode)
+                a, L = self.cmodel.find_maturity_v1(self.L_b, self.E_Hb, E_H, delta_t=delta_t, t_max=tmax, t_ini=self.a_b)
+            else:
+                # after metamorphosis
+                a, L = self.cmodel.find_maturity(self.L_j, self.E_Hj, E_H, delta_t=delta_t, s_M=self.s_M, t_max=tmax, t_ini=self.a_j)
+            self.maturity_states[E_H] = (a, L)
+        a, L = self.maturity_states[E_H]
+        return a / c_T
+
+    def evaluate(self, expression, c_T=1., globals={}):
+        return eval(expression, globals, ModelDict(self, c_T))
 
     def getTemperatureCorrection(self, T):
         # T is temperature in Celsius
