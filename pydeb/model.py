@@ -28,17 +28,17 @@ implied_properties = 'L_b', 'L_p', 'L_i', 'a_b', 'a_p', 'a_99', 'E_0', 'E_m', 'r
 
 long_names = {
     'T_A': 'Arrhenius temperature',
-    'p_Am': '{p_Am}, specific assimilation flux',
-    'F_m': '{F_m}, maximum specific searching rate',
+    'p_Am': 'specific assimilation flux',
+    'F_m': 'maximum specific searching rate',
     'kap_X': 'digestion efficiency (fraction of food to reserve)',
     'kap_P': 'faecation efficiency (fraction of food to faeces)',
     'v': 'energy conductance',
     'kap': 'allocation fraction to soma',
     'kap_R': 'reproduction efficiency',
-    'p_M': '[p_M], volume-specific somatic maintenance',
-    'p_T': 'p_T}, surface-specific somatic maintenance',
+    'p_M': 'volume-specific somatic maintenance',
+    'p_T': 'surface-specific somatic maintenance',
     'k_J': 'maturity maintenance rate coefficient',
-    'E_G': '[E_G], specific cost for structure',
+    'E_G': 'specific cost for structure',
     'E_Hb': 'maturity at birth',
     'E_Hj': 'maturity at metamorphosis',
     'E_Hx': 'maturity at weaning/fledgling',
@@ -54,7 +54,7 @@ long_names = {
     'a_99': 'age when reaching 99% of ultimate structural length',
     'R_i': 'ultimate reproduction rate',
     'r_B': 'von Bertalanffy growth rate',
-    'E_m': '[E_m], reserve capacity',
+    'E_m': 'reserve capacity',
     'E_0': 'initial reserve',
     's_M': 'acceleration at metamorphosis',
     'del_M': 'shape coefficient (structural : physical length)',
@@ -136,6 +136,24 @@ typified_models = {'std': 'standard DEB model',
                    'stx': 'with foetal development and optional preparation stage',
                    'abj': 'optional acceleration between birth and metamorphosis'
                    }
+
+def symbol2html(symbol):
+    original = symbol
+    if symbol == 'kap' or symbol.startswith('kap_'):
+        symbol = '&kappa;%s' % symbol[3:]
+    if '_' in symbol:
+        parts = symbol.split('_', 1)
+        parts[0] = '<i>%s</i>' % parts[0]
+        if not parts[1].isdigit():
+            parts[1] = '<i>%s</i>' % parts[1]
+        symbol = '%s<sub>%s</sub>' % tuple(parts)
+    else:
+        symbol = '<i>%s</i>' % symbol
+    if original in ('F_m', 'p_Am', 'p_T'):
+        symbol = '{%s}' % symbol
+    if original in ('E_G', 'p_M', 'E_m'):
+        symbol = '[%s]' % symbol
+    return symbol
 
 class ModelDict(object):
     def __init__(self, model, c_T=1.):
