@@ -139,8 +139,9 @@ typified_models = {'std': 'standard DEB model',
 
 def symbol2html(symbol):
     original = symbol
-    if symbol == 'kap' or symbol.startswith('kap_'):
-        symbol = '&kappa;%s' % symbol[3:]
+    for s, h in {'kap': '&kappa;', 'del': '&delta;'}.items():
+        if symbol == s or symbol.startswith(s + '_'):
+            symbol = '%s%s' % (h, symbol[len(s):])
     if '_' in symbol:
         parts = symbol.split('_', 1)
         parts[0] = '<i>%s</i>' % parts[0]
