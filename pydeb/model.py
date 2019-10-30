@@ -266,6 +266,12 @@ class Model(object):
         self.d_E = 0.21   # specific density of reserve (g DM/cm3)
         #self.WM_per_E = self.w_E / self.mu_E / self.d_E # cm3/J
 
+    def copy(self, **parameters):
+        clone = Model(type=parameters.get('type', self.type))
+        for p in primary_parameters + entry_parameters:
+            setattr(clone, p, parameters.get(p, getattr(self, p)))
+        return clone
+
     def initialize(self, E_0_ini=0., verbose=False, precision=0.001):
         assert self.p_T >= 0.
         assert self.p_M >= 0.
