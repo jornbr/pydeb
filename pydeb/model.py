@@ -137,6 +137,10 @@ typified_models = {'std': 'standard DEB model',
                    'abj': 'optional acceleration between birth and metamorphosis'
                    }
 
+compound_variables = {
+    'L_w': 'L/del_M'
+}
+
 def symbol2html(symbol):
     original = symbol
     for s, h in {'kap': '&kappa;', 'del': '&delta;'}.items():
@@ -157,17 +161,25 @@ def symbol2html(symbol):
     return symbol
 
 class ModelDict(object):
-    def __init__(self, model, c_T=1.):
+    """Evaluates a expression combining model parameters and implied properties (to be temperature corrected)
+    and optionally an additonals "locals" dictionary with additional objects - e.g., model results. The latter
+    takes priority if provided. Its contained varables are assumed to *already have been temperature-corrected*."""
+    def __init__(self, model, c_T=1., locals={}):
         self.model = model
         self.c_T = c_T
+        self.locals = locals
 
     def __getitem__(self, key):
+        if key in self.locals:
+            return self.locals[key]
+        if key in compound_variables:
+            return eval(compound_variables[key], {}, self)
         if not hasattr(self.model, key):
             raise KeyError()
         return getattr(self.model, key) * self.c_T**temperature_correction[key]
 
     def __contains__(self, key):
-        return hasattr(self.model, key)
+        return key in self.locals or hasattr(self.model, key) or key in compound_variables
 
 class Model(object):
     def __init__(self, type='abj'):
@@ -539,8 +551,8 @@ class Model(object):
         a, L = self.maturity_states[E_H]
         return a / c_T
 
-    def evaluate(self, expression, c_T=1., globals={}):
-        return eval(expression, globals, ModelDict(self, c_T))
+    def evaluate(self, expression, c_T=1., locals={}):
+        return eval(expression, {}, ModelDict(self, c_T, locals=locals))
 
     def getTemperatureCorrection(self, T):
         # T is temperature in Celsius
