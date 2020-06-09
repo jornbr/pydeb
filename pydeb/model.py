@@ -160,6 +160,26 @@ def symbol2html(symbol):
         symbol = '[%s]' % symbol
     return symbol
 
+def symbol2mathtext(symbol):
+    original = symbol
+    parts = symbol.split('_', 1)
+    for s, h in {'kap': '\kappa', 'del': '\delta'}.items():
+        if parts[0] == s:
+            parts[0] = h
+    if parts[0] in ('p', 'J', 'j', 'k', 'F', 'v'):
+        parts[0] = '\dot{%s}' % parts[0]
+    elif parts[0] in ('h',):
+        parts[0] = '\ddot{%s}' % parts[0]
+    if len(parts) > 1:
+        symbol = '%s_{%s}' % tuple(parts)
+    else:
+        symbol = parts[0]
+    if original in ('F_m', 'p_Am', 'p_T'):
+        symbol = r'\left\{ %s \right\}' % symbol
+    if original in ('E_G', 'p_M', 'E_m'):
+        symbol = r'\left[ %s \right]' % symbol
+    return symbol
+
 class ModelDict(object):
     """Evaluates a expression combining model parameters and implied properties (to be temperature corrected)
     and optionally an additonals "locals" dictionary with additional objects - e.g., model results. The latter
