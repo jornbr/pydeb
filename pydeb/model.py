@@ -141,6 +141,10 @@ compound_variables = {
     'L_w': 'L/del_M'
 }
 
+dot_symbols = ('p', 'J', 'j', 'k', 'F', 'v', 'r', 'R')
+ddot_symbols = ('h',)
+greek_symbols = {'kap': '\kappa', 'del': '\delta'}
+
 def symbol2html(symbol):
     original = symbol
     for s, h in {'kap': '&kappa;', 'del': '&delta;'}.items():
@@ -163,17 +167,13 @@ def symbol2html(symbol):
 def symbol2mathtext(symbol):
     original = symbol
     parts = symbol.split('_', 1)
-    for s, h in {'kap': '\kappa', 'del': '\delta'}.items():
-        if parts[0] == s:
-            parts[0] = h
-    if parts[0] in ('p', 'J', 'j', 'k', 'F', 'v'):
+    if parts[0] in dot_symbols:
         parts[0] = '\dot{%s}' % parts[0]
-    elif parts[0] in ('h',):
+    elif parts[0] in ddot_symbols:
         parts[0] = '\ddot{%s}' % parts[0]
-    if len(parts) > 1:
-        symbol = '%s_{%s}' % tuple(parts)
-    else:
-        symbol = parts[0]
+    elif parts[0] in greek_symbols:
+        parts[0] = greek_symbols[parts[0]]
+    symbol = parts[0] if len(parts) == 1 else '%s_{%s}' % tuple(parts)
     if original in ('F_m', 'p_Am', 'p_T'):
         symbol = r'\left\{ %s \right\}' % symbol
     if original in ('E_G', 'p_M', 'E_m'):
