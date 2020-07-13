@@ -143,13 +143,14 @@ compound_variables = {
 
 dot_symbols = ('p', 'J', 'j', 'k', 'F', 'v', 'r', 'R')
 ddot_symbols = ('h',)
-greek_symbols = {'kap': '\kappa', 'del': '\delta'}
+greek_symbols = {'kap': 'kappa', 'del': 'delta'}
+
 
 def symbol2html(symbol):
     original = symbol
-    for s, h in {'kap': '&kappa;', 'del': '&delta;'}.items():
+    for s, h in greek_symbols.items():
         if symbol == s or symbol.startswith(s + '_'):
-            symbol = '%s%s' % (h, symbol[len(s):])
+            symbol = '&%s;%s' % (h, symbol[len(s):])
     if '_' in symbol:
         parts = symbol.split('_', 1)
         parts[0] = '<i>%s</i>' % parts[0]
@@ -164,15 +165,16 @@ def symbol2html(symbol):
         symbol = '[%s]' % symbol
     return symbol
 
+
 def symbol2mathtext(symbol):
     original = symbol
     parts = symbol.split('_', 1)
     if parts[0] in dot_symbols:
-        parts[0] = '\dot{%s}' % parts[0]
+        parts[0] = r'\dot{%s}' % parts[0]
     elif parts[0] in ddot_symbols:
-        parts[0] = '\ddot{%s}' % parts[0]
+        parts[0] = r'\ddot{%s}' % parts[0]
     elif parts[0] in greek_symbols:
-        parts[0] = greek_symbols[parts[0]]
+        parts[0] = r'\%s' % greek_symbols[parts[0]]
     symbol = parts[0] if len(parts) == 1 else '%s_{%s}' % tuple(parts)
     if original in ('F_m', 'p_Am', 'p_T'):
         symbol = r'\left\{ %s \right\}' % symbol
@@ -180,10 +182,12 @@ def symbol2mathtext(symbol):
         symbol = r'\left[ %s \right]' % symbol
     return symbol
 
+
 class ModelDict(object):
     """Evaluates a expression combining model parameters and implied properties (to be temperature corrected)
     and optionally an additonals "locals" dictionary with additional objects - e.g., model results. The latter
     takes priority if provided. Its contained varables are assumed to *already have been temperature-corrected*."""
+
     def __init__(self, model, c_T=1., locals={}):
         self.model = model
         self.c_T = c_T
@@ -201,24 +205,25 @@ class ModelDict(object):
     def __contains__(self, key):
         return key in self.locals or hasattr(self.model, key) or key in compound_variables
 
+
 class Model(object):
     def __init__(self, type='abj'):
-        self.p_Am = None # {p_Am}, spec assimilation flux (J/d.cm^2)
-        self.v = None   # energy conductance (cm/d)
-        self.p_M = None # [p_M], vol-spec somatic maint, J/d.cm^3 
-        self.p_T = 0. # {p_T}, surf-spec somatic maint, J/d.cm^2
+        self.p_Am = None   # {p_Am}, spec assimilation flux (J/d.cm^2)
+        self.v = None      # energy conductance (cm/d)
+        self.p_M = None    # [p_M], vol-spec somatic maint, J/d.cm^3
+        self.p_T = 0.      # {p_T}, surf-spec somatic maint, J/d.cm^2
         self.kap = None
         self.E_G = None    # [E_G], spec cost for structure
         self.E_Hb = None   # maturity at birth (J)
         self.E_Hp = None   # maturity at puberty (J)
         self.E_Hj = None   # maturity at metamorphosis (J)
-        self.k_J = None #k_J: maturity maint rate coefficient, 1/d
-        self.h_a = None #Weibull aging acceleration (1/d^2)
-        self.s_G = None #Gompertz stress coefficient
-        self.kap_R = None # reproductive efficiency
-        self.kap_X = None # digestion efficiency of food to reserve
-        self.T_A = None # Arrhenius temperature
-        self.type = type # std, abj, stf, stx
+        self.k_J = None    # k_J: maturity maint rate coefficient, 1/d
+        self.h_a = None    # Weibull aging acceleration (1/d^2)
+        self.s_G = None    # Gompertz stress coefficient
+        self.kap_R = None  # reproductive efficiency
+        self.kap_X = None  # digestion efficiency of food to reserve
+        self.T_A = None    # Arrhenius temperature
+        self.type = type   # std, abj, stf, stx
 
         # stf
         # foetal development (rather than egg development)
@@ -227,13 +232,13 @@ class Model(object):
         # stx:
         # foetal development (rather than egg development) that first starts with a preparation stage and then sparks off at a time that is an extra parameter
         # a baby stage (for mammals) just after birth, ended by weaning, where juvenile switches from feeding on milk to solid food at maturity level EHx. Weaning is between birth and puberty.
-        #t_0: time at start development - stx model
-        #E_Hx: maturity at weaning (J) - stx model
+        # t_0: time at start development - stx model
+        # E_Hx: maturity at weaning (J) - stx model
 
         # ssj:
         # a non-feeding stage between events s and j during the juvenile stage that is initiated at a particular maturity level and lasts a particular time. Substantial metabolically controlled shrinking occur during this period, more than can be explained by starvation.
-        #E_Hs: maturity at S2/S3 transition - ssj model
-        #t_sj: period of metamorphosis - model ssj
+        # E_Hs: maturity at S2/S3 transition - ssj model
+        # t_sj: period of metamorphosis - model ssj
 
         # sbp
         # growth ceasing at puberty, meaning that the kappa-rule is not operational in adults.
@@ -241,7 +246,7 @@ class Model(object):
         # abj:
         # - acceleration between birth and metamorphosis (V1-morph)
         # - before and after acceleration: isomorphy
-        # Metamorphosis is before puberty and occurs at maturity EHj, which might or might not correspond with changes in morphology. This model is a one-parameter extension of model std. 
+        # Metamorphosis is before puberty and occurs at maturity EHj, which might or might not correspond with changes in morphology. This model is a one-parameter extension of model std.
         # E_Hj: maturity at metam (J) - abp model
 
         # asj
@@ -260,7 +265,7 @@ class Model(object):
         # - puberty occurs during the larval stage
         # - emergence occurs when reproduction buffer density hits a threshold
         # - the (sub)imago does not grow or allocate to reproduction. It mobilises reserve to match constant (somatic plus maturity) maintenance
-        #E_Rj: reproduction buffer density at emergence (J/cm^3) - hep model
+        # E_Rj: reproduction buffer density at emergence (J/cm^3) - hep model
 
         # hex
         # The DEB model for holometabolic insects (and some other hexapods). It characterics are
@@ -271,15 +276,15 @@ class Model(object):
         # - pupa behaves like an isomorphic embryo of model std, but larval structure rapidly transforms to pupal reserve just after start of pupation
         # - the reproduction buffer remains unchanged during the pupal stage
         # - the imago does not grow or allocate to reproduction. It mobilises reserve to match constant (somatic plus maturity) maintenance
-        #E_He: maturity at emergence (J) - hex model
-        #kap_V: conversion efficient E -> V -> E - hex model
+        # E_He: maturity at emergence (J) - hex model
+        # kap_V: conversion efficient E -> V -> E - hex model
 
-        #kap_P: digestion efficiency of food to faeces
-        #F_m {F_m}, max spec searching rate (l/d.cm^2)
-        #s_j: reprod buffer/structure at pupation as fraction of max (-) - hex model
+        # kap_P: digestion efficiency of food to faeces
+        # F_m {F_m}, max spec searching rate (l/d.cm^2)
+        # s_j: reprod buffer/structure at pupation as fraction of max (-) - hex model
 
         # pars specific for this entry
-        #del_M = L/Lw: shape coefficient (-)
+        # del_M = L/Lw: shape coefficient (-)
 
         # derived parameters
         self.E_0 = None
@@ -293,10 +298,10 @@ class Model(object):
         self.valid = False
         self.cmodel = None
 
-        self.mu_E = 5.5e5 # chemical potential of reserve (J/C-mol)
+        self.mu_E = 5.5e5  # chemical potential of reserve (J/C-mol)
         self.w_E = 23.9   # dry weight of reserve (g/C_mol)
         self.d_E = 0.21   # specific density of reserve (g DM/cm3)
-        #self.WM_per_E = self.w_E / self.mu_E / self.d_E # cm3/J
+        # self.WM_per_E = self.w_E / self.mu_E / self.d_E # cm3/J
 
     def copy(self, **parameters):
         clone = Model(type=parameters.get('type', self.type))
@@ -324,7 +329,7 @@ class Model(object):
         E_G = self.E_G
         E_Hb = self.E_Hb
         k_J = self.k_J
-        E_m = self.p_Am/self.v # defined at f=1
+        E_m = self.p_Am/self.v  # defined at f=1
         g = E_G/kap/E_m
         k_M = self.p_M/E_G
         L_m = kap*self.p_Am/self.p_M
@@ -372,10 +377,10 @@ class Model(object):
 
             t = 0.
             E_H = E_H_ini
-            L_i = (L_m - L_T)*s_M # f=1
+            L_i = (L_m - L_T) * s_M  # f=1
             done = False
             while not done:
-                L = (L_i-L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
+                L = (L_i-L_ini)*(1. - exp(-r_B*t)) + L_ini  # p 52
                 p_C = L*L*E_m*((v*E_G_per_kap + p_T_per_kap)*s_M + p_M_per_kap*L)/(E_m + E_G_per_kap)
                 dE_H = (1. - kap)*p_C - k_J*E_H
                 if E_H + delta_t * dE_H > E_H_target:
@@ -385,7 +390,7 @@ class Model(object):
                 t += delta_t
                 if t > t_max:
                     return None, None
-            L = (L_i - L_ini)*(1. - exp(-r_B*t)) + L_ini # p 52
+            L = (L_i - L_ini)*(1. - exp(-r_B*t)) + L_ini  # p 52
             return t_ini + t, L
 
         def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
@@ -431,7 +436,7 @@ class Model(object):
             find_maturity_egg = self.cmodel.find_maturity_egg
 
         # Compute maximum catabolic flux (before any acceleration)
-        # This flux needs to be able to at lesat support [= pay maintenance for] maturity at birth.
+        # This flux needs to be able to at least support [= pay maintenance for] maturity at birth.
         L_i = L_m - L_T
         p_C_i = L_i * L_i * E_m * ((v * E_G_per_kap + p_T_per_kap) + p_M_per_kap * L_i) / (E_m + E_G_per_kap)
         if k_J * E_Hb > (1 - kap) * p_C_i:
@@ -471,7 +476,7 @@ class Model(object):
 
             def root(E_0, delta_t):
                 _, _, E_H = get_birth_state(E_0, delta_t)
-                return E_H - E_Hb 
+                return E_H - E_Hb
             if verbose:
                 print('Determining cost of an egg and state at birth...')
             while 1:
@@ -494,8 +499,8 @@ class Model(object):
         # Set time step for integration to metamorphosis and puberty
         delta_t = max(precision * 10, self.a_b * precision * 10) * 2
 
-        self.r_B = self.p_M/3/(E_m*kap + E_G) # checked against p52, note f=1
-        L_i_min = self.L_m - self.L_T # not counting acceleration!
+        self.r_B = self.p_M/3/(E_m*kap + E_G)  # checked against p52, note f=1
+        L_i_min = self.L_m - self.L_T  # not counting acceleration!
         if L_i_min < self.L_b:
             # shrinking directly after birth
             if verbose:
@@ -669,7 +674,7 @@ class Model(object):
             # Energy fluxes in J/d
             p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/(E + E_G_per_kap*L3)
             p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
-            p_R = one_minus_kap*p_C - k_J*E_H # J/d
+            p_R = one_minus_kap*p_C - k_J*E_H  # J/d
 
             # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
             dE = p_A - p_C
@@ -745,7 +750,8 @@ class Model(object):
 
         return fig
 
-def plot(ax, t, values, perc_wide = 0.025, perc_narrow = 0.25, ylabel=None, title=None, color='k'):
+
+def plot(ax, t, values, perc_wide=0.025, perc_narrow=0.25, ylabel=None, title=None, color='k'):
     values.sort()
     n = values.shape[1]
     perc_50 = values[:, int(0.5*n)]
@@ -766,6 +772,7 @@ def plot(ax, t, values, perc_wide = 0.025, perc_narrow = 0.25, ylabel=None, titl
         ax.set_ylabel(ylabel)
     if title is not None:
         ax.set_title(title)
+
 
 class HTMLGenerator(object):
     def __init__(self, *models):
@@ -830,7 +837,7 @@ class HTMLGenerator(object):
                 ax.set_title(p)
                 ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator())
                 ax.yaxis.set_major_formatter(Fmt())
-                #ax.set_yscale('log')
+                # ax.set_yscale('log')
             fig.tight_layout()
             fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=dpi)
             strings.append('<img alt="violin plots of derived life history parameters" src="%s"/><br>' % urllib.pathname2url('%s/boxplots.png' % relworkdir))
@@ -868,6 +875,7 @@ class HTMLGenerator(object):
         strings.append('<img alt="time series of survival" src="%s"/><br>' % urllib.pathname2url('%s/tS.png' % relworkdir))
 
         return '\n'.join(strings)
+
 
 if __name__ == '__main__':
     model = Model()
