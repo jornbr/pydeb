@@ -154,7 +154,7 @@ cdef (double, double, double, double, double, double) bracket(Function func, dou
         wlim = xb + grow_limit * (xc - xb)
         if iter > maxiter:
             iter = -1
-            exit
+            break
         iter += 1
         if (w - xc) * (xb - w) > 0.0:
             fw = func.evaluate(w)
@@ -163,11 +163,11 @@ cdef (double, double, double, double, double, double) bracket(Function func, dou
                 xb = w
                 fa = fb
                 fb = fw
-                exit
+                break
             elif (fw > fb):
                 xc = w
                 fc = fw
-                exit
+                break
             w = xc + _gold * (xc - xb)
             fw = func.evaluate(w)
         elif (w - wlim)*(wlim - xc) >= 0.0:

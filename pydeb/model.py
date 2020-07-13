@@ -14,7 +14,7 @@ try:
 except ImportError:
     try:
         import pyximport
-        pyximport.install(setup_args={'include_dirs': numpy.get_include()})
+        pyximport.install(setup_args={'include_dirs': numpy.get_include()}, language_level='3')
         from . import cmodel
     except ImportError as e:
         print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
