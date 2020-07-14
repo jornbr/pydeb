@@ -5,3 +5,4 @@
 *.pyd
 *.c
 *.pyc
+/pydeb/engine/*.html
