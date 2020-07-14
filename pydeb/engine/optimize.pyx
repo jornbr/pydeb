@@ -1,13 +1,17 @@
 # Brent's method based on scipy.optimize.optimize (minimize_scalar with method='Brent')
 
+# cython: cdivision=True
+
 cimport cython
+from libc.math cimport fabs as abs
+from numpy.math cimport INFINITY
 
 cdef class Function:
-    cdef double evaluate(Function self, double x):
+    cdef double evaluate(Function self, double x) nogil:
         return 0
 
-@cython.cdivision(True)
-cdef double optimize(Function func, double xa, double xb):
+
+cdef double optimize(Function func, double xa, double xb) nogil:
     cdef double tol = 1.48e-8
     cdef double _mintol = 1.0e-11
     cdef double _cg = 0.3819660
@@ -26,7 +30,10 @@ cdef double optimize(Function func, double xa, double xb):
     cdef double tmp1, tmp2, p, dx_temp
 
     # set up for optimization
-    xa, xb, xc, fa, fb, fc = bracket(func, xa, xb)
+    xa, xb, xc, fa, fb, fc, iter = bracket(func, xa, xb, 110.0, 1000)
+    if iter == -1:
+        return INFINITY
+
     #################################
     #BEGIN CORE ALGORITHM
     #################################
@@ -122,10 +129,10 @@ cdef double optimize(Function func, double xa, double xb):
     #END CORE ALGORITHM
     #################################
 
-    return x
+    return x if iter < maxiter else INFINITY
 
-@cython.cdivision(True)
-cdef (double, double, double, double, double, double) bracket(Function func, double xa, double xb, double grow_limit=110.0, int maxiter=1000):
+
+cdef (double, double, double, double, double, double, int) bracket(Function func, double xa, double xb, double grow_limit, int maxiter) nogil:
     cdef double _gold = 1.618034  # golden ratio: (1.0+sqrt(5.0))/2.0
     cdef double _verysmall_num = 1e-21
     cdef double fa, fb, fc
@@ -191,6 +198,79 @@ cdef (double, double, double, double, double, double) bracket(Function func, dou
         fa = fb
         fb = fc
         fc = fw
-    if iter == -1:
-        raise RuntimeError("Too many iterations.")
-    return xa, xb, xc, fa, fb, fc
+    return xa, xb, xc, fa, fb, fc, iter
+
+
+# From scipy.optimize.brentq (Zeros/brentq.c)
+cdef double brentq(Function func, double xa, double xb, double xtol, double rtol, int maxiter) nogil:
+    cdef double xpre = xa, xcur = xb
+    cdef double xblk = 0., fpre, fcur, fblk = 0., spre = 0., scur = 0., sbis
+
+    # the tolerance is 2*delta
+    cdef double delta
+    cdef double stry, dpre, dblk
+    cdef int iter
+
+    fpre = func.evaluate(xpre)
+    fcur = func.evaluate(xcur)
+    if fpre*fcur > 0:
+        return INFINITY
+    if fpre == 0.:
+        return xpre
+    if fcur == 0.:
+        return xcur
+
+    iter = 0
+    while iter < maxiter:
+        if fpre*fcur < 0:
+            xblk = xpre
+            fblk = fpre
+            spre = scur = xcur - xpre
+
+        if abs(fblk) < abs(fcur):
+            xpre = xcur
+            xcur = xblk
+            xblk = xpre
+
+            fpre = fcur
+            fcur = fblk
+            fblk = fpre
+
+        delta = (xtol + rtol*abs(xcur))/2
+        sbis = (xblk - xcur)/2
+        if fcur == 0 or abs(sbis) < delta:
+            return xcur
+
+        if abs(spre) > delta and abs(fcur) < abs(fpre):
+            if xpre == xblk:
+                # interpolate
+                stry = -fcur*(xcur - xpre)/(fcur - fpre)
+            else:
+                # extrapolate
+                dpre = (fpre - fcur)/(xpre - xcur)
+                dblk = (fblk - fcur)/(xblk - xcur)
+                stry = -fcur*(fblk*dblk - fpre*dpre) / (dblk*dpre*(fblk - fpre))
+            if 2*abs(stry) < min(abs(spre), 3*abs(sbis) - delta):
+                # good short step
+                spre = scur
+                scur = stry
+            else:
+                # bisect
+                spre = sbis
+                scur = sbis
+        else:
+            # bisect
+            spre = sbis
+            scur = sbis
+
+        xpre = xcur
+        fpre = fcur
+        if abs(scur) > delta:
+            xcur += scur
+        else:
+            xcur += delta if sbis > 0 else -delta
+
+        fcur = func.evaluate(xcur)
+        iter += 1
+
+    return xcur

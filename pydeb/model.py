@@ -9,16 +9,7 @@ import numpy
 
 import scipy.optimize
 
-try:
-    import cmodel
-except ImportError:
-    try:
-        import pyximport
-        pyximport.install(setup_args={'include_dirs': numpy.get_include()}, language_level='3')
-        from . import cmodel
-    except ImportError as e:
-        print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
-        cmodel = None
+from . import engine
 
 primary_parameters = 'T_A', 'p_Am', 'F_m', 'kap_X', 'kap_P', 'v', 'kap', 'kap_R', 'p_M', 'p_T', 'k_J', 'E_G', 'E_Hb', 'E_Hx', 'E_Hj', 'E_Hp', 'h_a', 's_G', 't_0'
 
@@ -47,9 +38,11 @@ long_names = {
     's_G': 'Gompertz stress coefficient',
     't_0': 'time at start of development',
     'L_b': 'structural length at birth',
+    'L_j': 'structural length at metamorphosis',
     'L_p': 'structural length at puberty',
     'L_i': 'ultimate structural length',
     'a_b': 'age at birth',
+    'a_j': 'age at metamorphosis',
     'a_p': 'age at puberty',
     'a_99': 'age when reaching 99% of ultimate structural length',
     'R_i': 'ultimate reproduction rate',
@@ -81,9 +74,11 @@ units = {
     's_G': '-',
     't_0': 'd',
     'L_b': 'cm',
+    'L_j': 'cm',
     'L_p': 'cm',
     'L_i': 'cm',
     'a_b': 'd',
+    'a_j': 'd',
     'a_p': 'd',
     'a_99': 'd',
     'R_i': '1/d',
@@ -115,9 +110,11 @@ temperature_correction = {
     's_G': 0,
     't_0': -1,
     'L_b': 0,
+    'L_j': 0,
     'L_p': 0,
     'L_i': 0,
     'a_b': -1,
+    'a_j': -1,
     'a_p': -1,
     'a_99': -1,
     'R_i': 1,
@@ -296,7 +293,7 @@ class Model(object):
 
         self.initialized = False
         self.valid = False
-        self.cmodel = None
+        self.engine = None
 
         self.mu_E = 5.5e5  # chemical potential of reserve (J/C-mol)
         self.w_E = 23.9   # dry weight of reserve (g/C_mol)
@@ -329,11 +326,11 @@ class Model(object):
         E_G = self.E_G
         E_Hb = self.E_Hb
         k_J = self.k_J
-        E_m = self.p_Am/self.v  # defined at f=1
-        g = E_G/kap/E_m
-        k_M = self.p_M/E_G
-        L_m = kap*self.p_Am/self.p_M
-        L_T = self.p_T/self.p_M
+        E_m = self.p_Am / self.v  # defined at f=1
+        g = E_G / kap / E_m
+        k_M = self.p_M / E_G
+        L_m = kap * self.p_Am / self.p_M
+        L_T = self.p_T / self.p_M
         p_M = self.p_M
         p_T = self.p_T
 
@@ -348,92 +345,15 @@ class Model(object):
         v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kappa = 1-kap
 
-        def get_birth_state(E_0, delta_t=1.):
-            t, E, L, E_H = 0., float(E_0), 0., 0.
-            done = False
-            while not done:
-                L2 = L*L
-                L3 = L*L2
-                denom = E + E_G_per_kap*L3
-                p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
-                dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
-                dE = -p_C
-                dE_H = one_minus_kappa*p_C - k_J*E_H
-                if E_H + delta_t * dE_H > E_Hb:
-                    delta_t = (E_Hb - E_H)/dE_H
-                    done = True
-                E += delta_t * dE
-                L += delta_t * dL
-                E_H += delta_t * dE_H
-                t += delta_t
-                if E < 0 or dL < 0:
-                    return -1, -1, -1
-            return t, E, L
-
-        def find_maturity(L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
-            assert E_H_target >= E_H_ini
-            exp = math.exp
-            r_B = self.r_B
-
-            t = 0.
-            E_H = E_H_ini
-            L_i = (L_m - L_T) * s_M  # f=1
-            done = False
-            while not done:
-                L = (L_i-L_ini)*(1. - exp(-r_B*t)) + L_ini  # p 52
-                p_C = L*L*E_m*((v*E_G_per_kap + p_T_per_kap)*s_M + p_M_per_kap*L)/(E_m + E_G_per_kap)
-                dE_H = (1. - kap)*p_C - k_J*E_H
-                if E_H + delta_t * dE_H > E_H_target:
-                    delta_t = (E_H_target - E_H)/dE_H
-                    done = True
-                E_H += dE_H*delta_t
-                t += delta_t
-                if t > t_max:
-                    return None, None
-            L = (L_i - L_ini)*(1. - exp(-r_B*t)) + L_ini  # p 52
-            return t_ini + t, L
-
-        def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
-            assert E_H_target >= E_H_ini
-            exp = math.exp
-            V_b = L_ini**3
-
-            # dL = (E*v*L/L_b-p_S_per_kappa*L2*L2)/3/(E+E_G_per_kappa*L3)
-            #    = (E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa) * L
-            r = (kap*v/L_ini*E_m - self.p_M - self.p_T)/(E_G + kap*E_m) # specific growth rate of structural VOLUME
-            prefactor = (1. - kap)*V_b*E_m*(v*E_G/L_ini + self.p_M + self.p_T/L_ini)/(E_G + kap*E_m)
-
-            if True:
-                t = 0.
-                E_H = E_H_ini
-                done = False
-                while not done:
-                    dE_H = prefactor*exp(r*t) - k_J*E_H
-                    if E_H + delta_t * dE_H > E_H_target:
-                        delta_t = (E_H_target - E_H)/dE_H
-                        done = True
-                    E_H += dE_H*delta_t
-                    t += delta_t
-                    if t > t_max:
-                        return None, None
-            else:
-                # analytical solution E_H(t):
-                C = E_H_ini/prefactor - 1./(k_J+r)
-                t = scipy.optimize.minimize_scalar(lambda t: (E_H_target-prefactor*(exp(r*t)/(k_J+r) + C*exp(-k_J*t)))**2, (t_ini, 10*t_ini)).x
-
-            L = L_ini*exp(r/3*t)
-            return t_ini + t, L
-
-        if cmodel is not None:
-            self.cmodel = cmodel.Model()
-            for parameter in primary_parameters:
-                if hasattr(self.cmodel, parameter):
-                    setattr(self.cmodel, parameter, getattr(self, parameter))
-            get_birth_state = self.cmodel.get_birth_state
-            find_maturity = self.cmodel.find_maturity
-            find_maturity_v1 = self.cmodel.find_maturity_v1
-            find_maturity_foetus = self.cmodel.find_maturity_foetus
-            find_maturity_egg = self.cmodel.find_maturity_egg
+        self.engine = engine.create()
+        for parameter in primary_parameters:
+            if hasattr(self.engine, parameter):
+                setattr(self.engine, parameter, getattr(self, parameter))
+        get_E_0 = self.engine.get_E_0
+        get_birth_state = self.engine.get_birth_state
+        find_maturity = self.engine.find_maturity
+        find_maturity_v1 = self.engine.find_maturity_v1
+        find_maturity_foetus = self.engine.find_maturity_foetus
 
         # Compute maximum catabolic flux (before any acceleration)
         # This flux needs to be able to at least support [= pay maintenance for] maturity at birth.
@@ -474,15 +394,17 @@ class Model(object):
                     print('Cannot find valid initial estimate for E_0 (tried up to %s)' % E_0_max)
                 return
 
-            def root(E_0, delta_t):
-                _, _, E_H = get_birth_state(E_0, delta_t)
-                return E_H - E_Hb
+            #def root(E_0, delta_t):
+            #    _, _, E_H = get_birth_state(E_0, delta_t)
+            #    return E_H - E_Hb
             if verbose:
                 print('Determining cost of an egg and state at birth...')
             while 1:
-                E_0 = scipy.optimize.brentq(root, E_0_min, E_0_max, rtol=precision, args=(delta_t,))
+                #E_0 = scipy.optimize.brentq(root, E_0_min, E_0_max, rtol=precision, args=(delta_t,))
+                #a_b, L_b, _ = get_birth_state(E_0, delta_t)
+                E_0, a_b, L_b = get_E_0(E_0_min, E_0_max, delta_t=delta_t, precision=precision)
+
                 E_0_max = 2 * E_0
-                a_b, L_b, _ = get_birth_state(E_0, delta_t)
 
                 # Stop if we have the time of birth at desired accuracy
                 # (assume linear interpolation within Euler time step results in accuracy of 0.1 delta_t)
@@ -507,12 +429,12 @@ class Model(object):
                 print('Shrinking directly after birth (L_i_min < L_b).')
             return
         a_99_max = self.a_b - numpy.log(1 - (0.99*L_i_min - self.L_b)/(L_i_min - self.L_b))/self.r_B
-        if self.cmodel is not None:
-            self.cmodel.E_0 = self.E_0
-            self.cmodel.L_b = self.L_b
-            self.cmodel.r_B = self.r_B
-            self.cmodel.L_m = self.L_m
-            self.cmodel.L_T = self.L_T
+
+        self.engine.E_0 = self.E_0
+        self.engine.L_b = self.L_b
+        self.engine.r_B = self.r_B
+        self.engine.L_m = self.L_m
+        self.engine.L_T = self.L_T
 
         # metamorphosis
         if self.E_Hj > self.E_Hb:
@@ -526,8 +448,7 @@ class Model(object):
         else:
             self.a_j, self.L_j = self.a_b, self.L_b
         self.s_M = self.L_j / self.L_b
-        if self.cmodel is not None:
-            self.cmodel.s_M = self.s_M
+        self.engine.s_M = self.s_M
         self.L_i = (self.L_m - self.L_T) * self.s_M
         self.a_99 = self.a_j - numpy.log(1 - (0.99 * self.L_i - self.L_j) / (self.L_i - self.L_j)) / self.r_B
         p_C_i = self.L_i * self.L_i * E_m * ((v * E_G_per_kap + p_T_per_kap) * self.s_M + p_M_per_kap * self.L_i) / (E_m + E_G_per_kap)
@@ -563,15 +484,15 @@ class Model(object):
             if E_H < self.E_Hb:
                 # before birth
                 if self.type in ('stf', 'stx'):
-                    a, L, _ = self.cmodel.find_maturity_foetus(E_H, delta_t=delta_t, t_max=tmax)
+                    a, L, _ = self.engine.find_maturity_foetus(E_H, delta_t=delta_t, t_max=tmax)
                 else:
-                    a, L = self.cmodel.find_maturity_egg(E_H, delta_t=delta_t, t_max=tmax)
+                    a, L = self.engine.find_maturity_egg(E_H, delta_t=delta_t, t_max=tmax)
             elif E_H < self.E_Hj:
                 # before metamophosis (i.e., during acceleration in V1 morph mode)
-                a, L = self.cmodel.find_maturity_v1(self.L_b, self.E_Hb, E_H, delta_t=delta_t, t_max=tmax, t_ini=self.a_b)
+                a, L = self.engine.find_maturity_v1(self.L_b, self.E_Hb, E_H, delta_t=delta_t, t_max=tmax, t_ini=self.a_b)
             else:
                 # after metamorphosis
-                a, L = self.cmodel.find_maturity(self.L_j, self.E_Hj, E_H, delta_t=delta_t, s_M=self.s_M, t_max=tmax, t_ini=self.a_j)
+                a, L = self.engine.find_maturity(self.L_j, self.E_Hj, E_H, delta_t=delta_t, s_M=self.s_M, t_max=tmax, t_ini=self.a_j)
             self.maturity_states[E_H] = (a, L)
         a, L = self.maturity_states[E_H]
         return a / c_T
@@ -581,6 +502,7 @@ class Model(object):
 
     def getTemperatureCorrection(self, T):
         # T is temperature in Celsius
+        assert T < 200., 'Temperature must be given in degrees Celsius'
         return numpy.exp(self.T_A/293.15 - self.T_A/(273.15 + T))
 
     def writeFABMConfiguration(self, path, name='deb', model='deb/population'):
@@ -612,107 +534,26 @@ class Model(object):
     def report(self, c_T=1.):
         if not self.initialized:
             self.initialize()
-        print('E_0 [cost of an egg]: %s' % self.E_0)
-        print('r_B [von Bertalanffy growth rate]: %s' % (c_T*self.r_B))
-        print('a_b [age at birth]: %s' % (self.a_b/c_T))
-        print('a_j [age at metamorphosis]: %s' % (self.a_j/c_T))
-        print('a_p [age at puberty]: %s' % (self.a_p/c_T))
-        print('a_99 [age at L = 0.99 L_m]: %s' % (self.a_99/c_T))
-        print('[E_m] [reserve capacity]: %s' % self.E_m)
-        print('L_b [structural length at birth]: %s' % self.L_b)
-        print('L_j [structural length at metamorphosis]: %s' % self.L_j)
-        print('L_p [structural length at puberty]: %s' % self.L_p)
-        print('L_i [ultimate structural length]: %s' % self.L_i)
-        print('s_M [acceleration factor at f=1]: %s' % self.s_M)
-        print('R_i [ultimate reproduction rate]: %s' % (self.R_i*c_T))
+        if not self.valid:
+            print('This parameter set is not valid.')
+            return
+        d = ModelDict(self, c_T)
+        shown = ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i')
+        for name in shown:
+            print('%s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
     def simulate(self, n, delta_t, nsave=1, c_T=1., f=1.):
         if not self.initialized:
             self.initialize()
         if not self.valid:
             return
-        t = numpy.linspace(0., n*delta_t, int(n/nsave)+1)
+        t = numpy.linspace(0., n * delta_t, int(n / nsave) + 1)
         assert f >= 0. and f <= 1.
         assert c_T > 0.
-        if self.cmodel is not None:
-            result = numpy.empty((int(n/nsave) + 1, 10))
-            self.cmodel.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
-            return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
 
-        kap = self.kap
-        v = self.v*c_T
-        k_J = self.k_J*c_T
-        p_Am = self.p_Am*c_T
-        p_M = self.p_M*c_T
-        p_T = self.p_T*c_T
-        E_G = self.E_G
-        E_Hb = self.E_Hb
-        E_Hp = self.E_Hp
-        s_G = self.s_G
-        h_a = self.h_a*c_T*c_T
-        E_0 = self.E_0
-        kap_R = self.kap_R
-        s_M = self.s_M
-        L_b = self.L_b
-
-        E_m = p_Am/v
-        L_m = kap*p_Am/p_M
-        L_m3 = L_m**3
-        E_G_per_kap = E_G/kap
-        p_M_per_kap = p_M/kap
-        p_T_per_kap = p_T/kap
-        v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
-        one_minus_kap = 1-kap
-
-        def dy(y, t0):
-            E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
-            L2 = L*L
-            L3 = L*L2
-            s = max(1., min(s_M, L/L_b))
-            #s = 1.
-
-            # Energy fluxes in J/d
-            p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/(E + E_G_per_kap*L3)
-            p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
-            p_R = one_minus_kap*p_C - k_J*E_H  # J/d
-
-            # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
-            dE = p_A - p_C
-            dL = (E*v*s-(p_M_per_kap*L+p_T_per_kap*s)*L3)/3/(E+E_G_per_kap*L3)
-            if E_H < E_Hp:
-                dE_H = p_R
-                dE_R = 0.
-            else:
-                dE_H = 0
-                dE_R = kap_R * p_R
-
-            # Damage-inducing compounds, damage, survival (0-1) - p 216
-            dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
-            dH = Q
-            dS = 0. if L3 <= 0. or S < 1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
-
-            # Cumulative reproduction (#) and life span (d)
-            dcumR = S*dE_R/E_0
-            dcumt = S
-
-            return numpy.array((dE, dL, dE_H, dE_R, dQ, dH, dS, dcumR, dcumt), dtype=float), dE_R/E_0
-
-        y0 = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
-        result = numpy.empty((t.size, y0.size))
-        allR = numpy.empty((t.size,))
-        y = y0
-        for it in range(n+1):
-            if it % nsave == 0:
-                result[it/nsave, :] = y
-            derivative, R = dy(y, it*delta_t)
-            if not numpy.isfinite(derivative).all():
-                print('Temporal derivatives contain NaN: %s' % derivative)
-                sys.exit(1)
-            y += delta_t*derivative
-            if it % nsave == 0:
-                allR[it/nsave] = R
-
-        return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': allR}
+        result = numpy.empty((int(n / nsave) + 1, 10))
+        self.engine.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
+        return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
 
     def plotResult(self, t, L, S, R, E_H, **kwargs):
         from matplotlib import pyplot

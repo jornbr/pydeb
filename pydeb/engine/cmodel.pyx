@@ -1,17 +1,18 @@
 cimport cython
 from numpy.math cimport INFINITY
 
-from libc.math cimport exp, log10, sqrt
-from optimize cimport Function, optimize
+from libc.math cimport exp, log10, sqrt, cbrt
+from .optimize cimport Function, optimize, brentq
 
+@cython.final
 cdef class error_in_E(Function):
     cdef double delta_t
     cdef Model model
     cdef double E_m
 
     @cython.cdivision(True)
-    cdef double evaluate(error_in_E self, double x):
-        cdef double a_b, E_b, L_b 
+    cdef double evaluate(error_in_E self, double x) nogil:
+        cdef double a_b, E_b, L_b
         E_0 = 10.**x
         a_b, E_b, L_b = self.model.get_birth_state(E_0, self.delta_t)
         if a_b == -1.:
@@ -19,6 +20,19 @@ cdef class error_in_E(Function):
         ssq = (log10(E_b) - 3 * log10(L_b) - log10(self.E_m))**2
         return ssq
 
+@cython.final
+cdef class E_Hb_difference(Function):
+    cdef double delta_t
+    cdef Model model
+    cdef double E_Hb
+
+    @cython.cdivision(True)
+    cdef double evaluate(E_Hb_difference self, double x) nogil:
+        cdef double E_H
+        E_H = self.model.get_birth_state(x, self.delta_t)[2]
+        return E_H - self.E_Hb
+
+@cython.final
 cdef class Model:
     cdef public double v
     cdef public double p_M
@@ -43,20 +57,27 @@ cdef class Model:
     cdef public double s_M
 
     @cython.cdivision(True)
-    def get_E_0(Model self, double log10_E_0_left, double log10_E_0_right, double delta_t):
-        cdef error_in_E func = error_in_E()
+    def get_E_0(Model self, double E_0_left, double E_0_right, double delta_t, double precision):
+        #cdef error_in_E func = error_in_E()
+        #func.model = self
+        #func.delta_t = delta_t
+        #func.E_m = self.p_Am/self.v
+        #log10_E_0 = optimize(func, log10_E_0_left, log10_E_0_right)
+        #a_b, E_b, L_b = self.get_birth_state(10.**log10_E_0, delta_t)
+        #return log10_E_0, a_b, L_b
+        cdef E_Hb_difference func = E_Hb_difference()
         func.model = self
         func.delta_t = delta_t
-        func.E_m = self.p_Am/self.v
-        log10_E_0 = optimize(func, log10_E_0_left, log10_E_0_right)
-        a_b, E_b, L_b = self.get_birth_state(10.**log10_E_0, delta_t)
-        return log10_E_0, a_b, L_b
+        func.E_Hb = self.E_Hb
+        E_0 = brentq(func, E_0_left, E_0_right, xtol = 2e-12, rtol=precision, maxiter=100)
+        a_b, L_b, _ = self.get_birth_state(E_0, delta_t)
+        return E_0, a_b, L_b
 
     @cython.cdivision(True)
-    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t):
+    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t) nogil:
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
-        cdef double L2, L3, denom, p_C
+        cdef double L2, L3, invdenom, p_C
 
         cdef int done = 0
 
@@ -71,31 +92,30 @@ cdef class Model:
 
         cdef double dt = delta_t
 
-        with nogil:
-            t, E, L, E_H = 0., E_0, 0., 0.
-            while done == 0:
-                L2 = L*L
-                L3 = L*L2
-                denom = E + E_G_per_kap*L3
-                p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
-                dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
-                dE = -p_C
-                dE_H = one_minus_kap*p_C - k_J*E_H
-                if dL <= 0:
-                    dt = (E - L**3 * E_m) / p_C
-                    done = 1
-                elif E + dt * dE < E_m * (L + dt * dL)**3:
-                    p = p_C / (dL * E_m)
-                    q = - (E + p_C * L / dL) / E_m
-                    c1 = -q/2
-                    c2 = sqrt(q*q/4 + p*p*p/27)
-                    L_new = (c1 + c2)**(1./3.) + -(c2 - c1)**(1./3.)
-                    dt = (L_new - L) / dL
-                    done = 1
-                t += dt
-                E += dt * dE
-                L += dt * dL
-                E_H += dt * dE_H
+        t, E, L, E_H = 0., E_0, 0., 0.
+        while done == 0:
+            L2 = L * L
+            L3 = L * L2
+            invdenom = 1. / (E + E_G_per_kap * L3)
+            p_C = E * (v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3) * invdenom
+            dL = (E * v - (p_M_per_kap * L + p_T_per_kap) * L3) * invdenom * 0.3333333333333333
+            dE = -p_C
+            dE_H = one_minus_kap * p_C - k_J * E_H
+            if dL <= 0:
+                dt = (E - L**3 * E_m) / p_C
+                done = 1
+            elif E + dt * dE < E_m * (L + dt * dL)**3:
+                p = p_C / (dL * E_m)
+                q = - (E + p_C * L / dL) / E_m
+                c1 = -q/2
+                c2 = sqrt(q*q/4 + p*p*p/27)
+                L_new = cbrt(c1 + c2) - cbrt(c2 - c1)
+                dt = (L_new - L) / dL
+                done = 1
+            t += dt
+            E += dt * dE
+            L += dt * dL
+            E_H += dt * dE_H
         return t, L, E_H
 
     @cython.cdivision(True)
