@@ -542,18 +542,51 @@ class Model(object):
         for name in shown:
             print('%s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
+    def stateAtSurvival(self, S, c_T=1., f=1., delta_t=None, t_max=365*100, precision=0.001):
+        if not self.initialized:
+            self.initialize()
+        if not self.valid:
+            return
+        assert f >= 0. and f <= 1.
+        assert c_T > 0.
+        if delta_t is None:
+            delta_t = max(precision * 10, self.a_b * precision * 10) * 2
+        n = int(math.ceil(t_max / delta_t))
+        result = numpy.empty((1, 11))
+        self.engine.integrate(n, delta_t, 0, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, S_crit=S)
+        return {
+            't': result[0, 0],
+            'E': result[0, 1],
+            'L': result[0, 2],
+            'E_H': result[0, 3],
+            'E_R': result[0, 4],
+            'S': result[0, 7],
+            'cumR': result[0, 8],
+            'a': result[0, 9],
+            'R': result[0, 10]
+        }
+
     def simulate(self, n, delta_t, nsave=1, c_T=1., f=1.):
         if not self.initialized:
             self.initialize()
         if not self.valid:
             return
-        t = numpy.linspace(0., n * delta_t, int(n / nsave) + 1)
         assert f >= 0. and f <= 1.
         assert c_T > 0.
 
-        result = numpy.empty((int(n / nsave) + 1, 10))
+        result = numpy.empty((int(n / nsave) + 1, 11))
         self.engine.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
-        return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': result[:, 9]}
+        return {
+            't': result[:, 0],
+            'E': result[:, 1],
+            'L': result[:, 2],
+            'E_H': result[:, 3],
+            'E_R': result[:, 4],
+            'S': result[:, 7],
+            'cumR': result[:, 8],
+            'a': result[:, 9],
+            'R': result[:, 10]
+        }
 
     def plotResult(self, t, L, S, R, E_H, **kwargs):
         from matplotlib import pyplot

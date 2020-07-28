@@ -122,76 +122,80 @@ cdef class Model:
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
     def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0.):
-        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, E_0, kap_R, s_M, L_b
-        cdef double E_m, L_m, L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
-        cdef double L2, L3, s, p_C, p_R, denom
+        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, s_M, inv_L_b, inv_delta_t, inv_E_m
+        cdef double E_m, L_m, inv_L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
+        cdef double L2, L3, s, p_C, p_R, invdenom
         cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
         cdef int i, isave, devel_state
         cdef bint save
 
         kap = self.kap
-        v = self.v*c_T
-        k_J = self.k_J*c_T
-        p_Am = self.p_Am*c_T
-        p_M = self.p_M*c_T
-        p_T = self.p_T*c_T
+        v = self.v * c_T
+        k_J = self.k_J * c_T
+        p_Am = self.p_Am * c_T
+        p_M = self.p_M * c_T
+        p_T = self.p_T * c_T
         E_G = self.E_G
         E_Hb = self.E_Hb
         E_Hj = self.E_Hj
         E_Hp = self.E_Hp
         s_G = self.s_G
-        h_a = self.h_a*c_T*c_T
-        E_0 = self.E_0
+        h_a = self.h_a * c_T * c_T
+        inv_E_0 = 1. / self.E_0
         kap_R = self.kap_R
         s_M = self.s_M
-        L_b = self.L_b
+        inv_L_b = 1. / self.L_b
+        inv_delta_t = 1. / (delta_t + 1e-8)
 
-        E_m = p_Am/v
-        L_m = kap*p_Am/p_M
-        L_m3 = L_m**3
-        E_G_per_kap = E_G/kap
-        p_M_per_kap = p_M/kap
-        p_T_per_kap = p_T/kap
-        v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
-        one_minus_kap = 1-kap
+        E_m = p_Am / v
+        inv_E_m = 1. / E_m
+        L_m = kap * p_Am / p_M
+        inv_L_m3 = 1. / L_m**3
+        E_G_per_kap = E_G / kap
+        p_M_per_kap = p_M / kap
+        p_T_per_kap = p_T / kap
+        v_E_G_plus_P_T_per_kap = (v * E_G + p_T) / kap
+        one_minus_kap = 1 - kap
         devel_state = devel_state_ini
 
         dE_R = 0.
         with nogil:
             isave = 0
-            E, L, E_H, E_R, Q, H, S, cumR, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
+            E, L, E_H, E_R, Q, H, S, cumR, cumt = self.E_0, 0., 0., 0., 0., 0., 1., 0., 0.
             for i in range(n + 1):
-                save = S < S_crit if nsave == 0 else i % nsave == 0
+                save = (S < S_crit or i == n) if nsave == 0 else i % nsave == 0
                 if save:
-                    result[isave, 0] = E
-                    result[isave, 1] = L
-                    result[isave, 2] = E_H
-                    result[isave, 3] = E_R
-                    result[isave, 4] = Q
-                    result[isave, 5] = H
-                    result[isave, 6] = S
-                    result[isave, 7] = cumR
-                    result[isave, 8] = cumt
+                    result[isave, 0] = i * delta_t
+                    result[isave, 1] = E
+                    result[isave, 2] = L
+                    result[isave, 3] = E_H
+                    result[isave, 4] = E_R
+                    result[isave, 5] = Q
+                    result[isave, 6] = H
+                    result[isave, 7] = S
+                    result[isave, 8] = cumR
+                    result[isave, 9] = cumt
 
-                L2 = L*L
-                L3 = L*L2
-                s = max(1., min(s_M, L/L_b))
+                L2 = L * L
+                L3 = L * L2
+                s = max(1., min(s_M, L * inv_L_b))
 
                 # Calculate current p_C (J/d) and update to next L and E
                 if (devel_state == -1):
                     # developing foetus - explicit equations for L(t) and E(t)
+                    # t = i * delta_t, but here were are computing the state for the next time step, i + 1
                     p_C = v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3
-                    L = v * ((i + 1) * delta_t) / 3
+                    L = 0.3333333333333333 * v * (i + 1) * delta_t
                     E = L * E_m
                 else:
-                    denom = E + E_G_per_kap*L3
-                    p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/denom
+                    invdenom = 1. / (E + E_G_per_kap * L3)
+                    p_C = E * (v_E_G_plus_P_T_per_kap * s * L2 + p_M_per_kap * L3) * invdenom
 
-                    dE = - p_C
+                    dE = -p_C
                     if devel_state > 1:
                         # no longer an embryo/foetus - feeding/assimilation is active
                         dE += p_Am * L2 * f * s
-                    dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) / 3 / denom
+                    dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) * 0.3333333333333333 * invdenom
                     E += delta_t * dE
                     L += delta_t * dL
 
@@ -208,12 +212,12 @@ cdef class Model:
                     # reproduction (cumulative allocation in J/d and average total offspring over lifetime in #)
                     dE_R = kap_R * p_R
                     E_R += delta_t * dE_R
-                    cumR += delta_t * S * dE_R / E_0
+                    cumR += delta_t * S * dE_R * inv_E_0
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
-                dQ = max((Q/L_m3*s_G + h_a)*max(0., p_C)/E_m, -Q/(delta_t+1e-8))
+                dQ = max((Q * inv_L_m3 * s_G + h_a) * max(0., p_C) * inv_E_m, -Q * inv_delta_t)
                 dH = Q
-                dS = 0. if L3 <= 0. or S < 0 else -min(1. / (delta_t + 1e-8), H / L3) * S
+                dS = 0. if L3 <= 0. or S < 0 else -min(inv_delta_t, H / L3) * S
 
                 # Update state variables related to survival
                 Q += delta_t * dQ     # damage inducing compounds (1/d2)
@@ -223,7 +227,7 @@ cdef class Model:
 
                 # Save diagnostics
                 if save:
-                    result[isave, 9] = dE_R/E_0
+                    result[isave, 10] = dE_R * inv_E_0
                     if nsave == 0:
                         break
                     isave += 1
