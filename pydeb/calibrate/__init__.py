@@ -1,2 +1,2 @@
-from simulator import *
-import likelihood
+from .simulator import *
+from . import likelihood
