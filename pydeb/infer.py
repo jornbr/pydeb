@@ -7,12 +7,14 @@ import IPython.display
 
 class CoLResult(dict):
     def _repr_html_(self):
-        return '<table>%s</table>' % ''.join(['<tr><td style="text-align:left">%s</td><td style="text-align:left"><a href="%s" target="_blank">%s</a></td></tr>' % (colid, url, name) for (colid, (name, url)) in self.items()])
+        return '<table><tr><th style="text-align:left">Catalogue of Life identifier</th><th style="text-align:left">Species</th></tr>%s</table>' % ''.join(['<tr><td style="text-align:left">%s</td><td style="text-align:left"><a href="%s" target="_blank">%s</a></td></tr>' % (colid, url, name) for (colid, (name, url)) in self.items()])
 
 def get_ids(name):
     f = urllib.request.urlopen('http://webservice.catalogueoflife.org/col/webservice?name=%s&format=json' % urllib.parse.quote_plus(name))
     data = json.load(f)
     results = CoLResult()
+    if 'results' not in data:
+        return 'No entries found in Catalogue of Life with name "%s"' % name
     for entry in data['results']:
         entry = entry.get('accepted_name', entry)
         results[entry['id']] = (entry['name_html'], entry['url'])
