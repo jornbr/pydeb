@@ -1,3 +1,5 @@
+import sys
+
 import numpy
 
 try:
@@ -15,7 +17,7 @@ class PyEngine(object):
     def __init__(self):
         pass
 
-    def get_birth_state(E_0, delta_t=1.):
+    def get_birth_state(self, E_0, delta_t=1.):
         t, E, L, E_H = 0., float(E_0), 0., 0.
         done = False
         while not done:
@@ -37,7 +39,7 @@ class PyEngine(object):
                 return -1, -1, -1
         return t, E, L
 
-    def find_maturity(L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
+    def find_maturity(self, L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
         assert E_H_target >= E_H_ini
         exp = math.exp
         r_B = self.r_B
@@ -60,7 +62,7 @@ class PyEngine(object):
         L = (L_i - L_ini)*(1. - exp(-r_B*t)) + L_ini  # p 52
         return t_ini + t, L
 
-    def find_maturity_v1(L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
+    def find_maturity_v1(self, L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
         assert E_H_target >= E_H_ini
         exp = math.exp
         V_b = L_ini**3
@@ -91,7 +93,7 @@ class PyEngine(object):
         L = L_ini*exp(r/3*t)
         return t_ini + t, L
 
-    def integrate(n, delta_t, nsave, result, c_T, f, devel_state_ini):
+    def integrate(self, n, delta_t, nsave, result, c_T, f, devel_state_ini):
         kap = self.kap
         v = self.v*c_T
         k_J = self.k_J*c_T
