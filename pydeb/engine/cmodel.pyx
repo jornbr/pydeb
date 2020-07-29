@@ -4,6 +4,8 @@ from numpy.math cimport INFINITY
 from libc.math cimport exp, log10, sqrt, cbrt
 from .optimize cimport Function, optimize, brentq
 
+DEF onethird = 0.3333333333333333
+
 @cython.final
 cdef class error_in_E(Function):
     cdef double delta_t
@@ -90,32 +92,30 @@ cdef class Model:
         cdef double k_J = self.k_J
         cdef double E_m = self.p_Am/self.v
 
-        cdef double dt = delta_t
-
         t, E, L, E_H = 0., E_0, 0., 0.
         while done == 0:
             L2 = L * L
             L3 = L * L2
             invdenom = 1. / (E + E_G_per_kap * L3)
             p_C = E * (v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3) * invdenom
-            dL = (E * v - (p_M_per_kap * L + p_T_per_kap) * L3) * invdenom * 0.3333333333333333
+            dL = (E * v - (p_M_per_kap * L + p_T_per_kap) * L3) * invdenom * onethird
             dE = -p_C
             dE_H = one_minus_kap * p_C - k_J * E_H
             if dL <= 0:
-                dt = (E - L**3 * E_m) / p_C
+                delta_t = (E - L**3 * E_m) / p_C
                 done = 1
-            elif E + dt * dE < E_m * (L + dt * dL)**3:
+            elif E + delta_t * dE < E_m * (L + delta_t * dL)**3:
                 p = p_C / (dL * E_m)
                 q = - (E + p_C * L / dL) / E_m
                 c1 = -q/2
                 c2 = sqrt(q*q/4 + p*p*p/27)
                 L_new = cbrt(c1 + c2) - cbrt(c2 - c1)
-                dt = (L_new - L) / dL
+                delta_t = (L_new - L) / dL
                 done = 1
-            t += dt
-            E += dt * dE
-            L += dt * dL
-            E_H += dt * dE_H
+            t += delta_t
+            E += delta_t * dE
+            L += delta_t * dL
+            E_H += delta_t * dE_H
         return t, L, E_H
 
     @cython.cdivision(True)
@@ -185,8 +185,8 @@ cdef class Model:
                     # developing foetus - explicit equations for L(t) and E(t)
                     # t = i * delta_t, but here were are computing the state for the next time step, i + 1
                     p_C = v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3
-                    L = 0.3333333333333333 * v * (i + 1) * delta_t
-                    E = L * E_m
+                    L = onethird * v * (i + 1) * delta_t
+                    E = L3 * E_m
                 else:
                     invdenom = 1. / (E + E_G_per_kap * L3)
                     p_C = E * (v_E_G_plus_P_T_per_kap * s * L2 + p_M_per_kap * L3) * invdenom
@@ -195,7 +195,7 @@ cdef class Model:
                     if devel_state > 1:
                         # no longer an embryo/foetus - feeding/assimilation is active
                         dE += p_Am * L2 * f * s
-                    dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) * 0.3333333333333333 * invdenom
+                    dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) * onethird * invdenom
                     E += delta_t * dE
                     L += delta_t * dL
 
@@ -234,7 +234,7 @@ cdef class Model:
 
     @cython.cdivision(True)
     cpdef (double, double) find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
-        cdef double r_B, E_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, one_minus_kap, k_J, v_E_G_plus_P_T_per_kap
+        cdef double r_B, E_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, one_minus_kap, k_J, v_E_G_plus_P_T_per_kap, prefactor
         cdef double t, E_H
         cdef double L_i
         cdef double L, p_C, dE_H
@@ -248,25 +248,29 @@ cdef class Model:
         E_m = self.p_Am/self.v
         one_minus_kap = 1.-self.kap
         k_J = self.k_J
+        prefactor = E_m / (E_m + E_G_per_kap)
+        exp_min_r_B_delta_t = exp(-r_B * delta_t)
 
         t = 0.
         E_H = E_H_ini
-        L_range = (self.L_m - self.L_T)*s_M - L_ini  # note L_i at f=1
+        exp_min_r_B_t = 1.
+        L_range = (self.L_m - self.L_T) * s_M - L_ini  # note L_i at f=1
         with nogil:
             done = 0
             while done == 0:
-                L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
-                p_C = L*L*E_m*(v_E_G_plus_P_T_per_kap*s_M + p_M_per_kap*L)/(E_m + E_G_per_kap)
-                dE_H = one_minus_kap*p_C - k_J*E_H
+                L = L_range * (1. - exp_min_r_B_t) + L_ini # p 52
+                p_C = L * L * prefactor * (v_E_G_plus_P_T_per_kap * s_M + p_M_per_kap * L)
+                dE_H = one_minus_kap * p_C - k_J * E_H
                 if E_H + delta_t * dE_H > E_H_target:
-                    delta_t = (E_H_target - E_H)/dE_H
+                    delta_t = (E_H_target - E_H) / dE_H
                     done = 1
                 t += delta_t
-                E_H += dE_H*delta_t
+                E_H += dE_H * delta_t
+                exp_min_r_B_t *= exp_min_r_B_delta_t
                 if t > t_max:
                     done = 2
         if done == 1:
-            L = L_range*(1. - exp(-r_B*t)) + L_ini # p 52
+            L = L_range * (1. - exp(-r_B * t)) + L_ini # p 52
             return t_ini + t, L
         return -1., -1.
 
@@ -290,22 +294,25 @@ cdef class Model:
         #    = (E_m*v/L_b-p_S_per_kappa)/3/(E_m+E_G_per_kappa) * L
         r = (kap*v/L_ini*E_m - p_M - p_T)/(E_G + kap*E_m) # specific growth rate of structural VOLUME
         prefactor = (1. - kap)*V_ini*E_m*(v*E_G/L_ini + p_M + p_T/L_ini)/(E_G + kap*E_m)
+        exp_r_delta_t = exp(r * delta_t)
 
         t = 0.
         E_H = E_H_ini
+        exp_r_t = 1.
         with nogil:
             done = 0
             while done == 0:
-                dE_H = prefactor*exp(r*t) - k_J*E_H
+                dE_H = prefactor * exp_r_t - k_J * E_H
                 if E_H + delta_t * dE_H > E_H_target:
-                    delta_t = (E_H_target - E_H)/dE_H
+                    delta_t = (E_H_target - E_H) / dE_H
                     done = 1
-                E_H += dE_H*delta_t
+                E_H += dE_H * delta_t
                 t += delta_t
+                exp_r_t *= exp_r_delta_t
                 if t > t_max:
                     done = 2
         if done == 1:
-            L = L_ini*exp(r/3*t)
+            L = L_ini * exp(r * t * onethird)
             return t_ini + t, L
         return -1., -1.
 
@@ -323,7 +330,7 @@ cdef class Model:
         t = 0.
         E_H = 0.
         with nogil:
-            done = 0
+            done = 0 if E_H < E_H_target else 1
             while done == 0:
                 dE_H = (prefactor1 + prefactor2 * t) * t * t - k_J * E_H
                 if E_H + delta_t * dE_H > E_H_target:
@@ -348,35 +355,33 @@ cdef class Model:
 
         cdef int done
 
-        cdef double p_M_per_kap = self.p_M/self.kap
-        cdef double p_T_per_kap = self.p_T/self.kap
-        cdef double E_G_per_kap = self.E_G/self.kap
+        cdef double p_M_per_kap = self.p_M / self.kap
+        cdef double p_T_per_kap = self.p_T / self.kap
+        cdef double E_G_per_kap = self.E_G / self.kap
         cdef double one_minus_kap = 1. - self.kap
-        cdef double v_E_G_plus_P_T_per_kap = (self.v*self.E_G + self.p_T)/self.kap
+        cdef double v_E_G_plus_P_T_per_kap = (self.v * self.E_G + self.p_T) / self.kap
         cdef double v = self.v
         cdef double k_J = self.k_J
-        cdef double E_m = self.p_Am/self.v
-
-        cdef double dt = delta_t
+        cdef double E_m = self.p_Am / self.v
 
         t, E, L, E_H = 0., self.E_0, 0., 0.
         with nogil:
-            done = 0
+            done = 0 if E_H < E_H_target else 1
             while done == 0:
-                L2 = L*L
-                L3 = L*L2
-                denom = E + E_G_per_kap*L3
-                p_C = E*(v_E_G_plus_P_T_per_kap*L2 + p_M_per_kap*L3)/denom
-                dL = (E*v-(p_M_per_kap*L+p_T_per_kap)*L3)/3/denom
+                L2 = L * L
+                L3 = L * L2
+                invdenom = 1. / (E + E_G_per_kap * L3)
+                p_C = E * (v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3) * invdenom
+                dL = (E * v - (p_M_per_kap * L + p_T_per_kap) * L3) * onethird * invdenom
                 dE = -p_C
-                dE_H = one_minus_kap*p_C - k_J*E_H
+                dE_H = one_minus_kap * p_C - k_J * E_H
                 if E_H + delta_t * dE_H > E_H_target:
                     delta_t = (E_H_target - E_H) / dE_H
                     done = 1
-                t += dt
-                E += dt * dE
-                L += dt * dL
-                E_H += dt * dE_H
+                t += delta_t
+                E += delta_t * dE
+                L += delta_t * dL
+                E_H += delta_t * dE_H
                 if t > t_max:
                     done = 2
         if done == 1:
