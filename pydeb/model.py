@@ -288,6 +288,7 @@ class Model(object):
         self.L_b = None
         self.a_b = None
         self.a_99 = None
+        self.a_m_ = None
         # L_m = kappa*v*E_m/p_M = kappa*p_Am/p_M [L_m is maximum length in absence of surface=-area-specific maintenance!]
         # z = L_m/L_m_ref with L_m_ref = 1 cm - equal to L_m
 
@@ -479,7 +480,7 @@ class Model(object):
             self.E_Hp: (self.a_p, self.L_p)
         }
 
-    def ageAtMaturity(self, E_H, precision=0.001, c_T=1.):
+    def age_at_maturity(self, E_H, precision=0.001, c_T=1.):
         """Get age (time since start of development) at specific maturity value."""
         if E_H not in self.maturity_states:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
@@ -506,7 +507,7 @@ class Model(object):
         But note that the values in locals are then assumed to already have been temperature corrected!"""
         return eval(expression, {}, ModelDict(self, c_T, locals=locals))
 
-    def getTemperatureCorrection(self, T):
+    def get_temperature_correction(self, T):
         """Compute temperature correction factor c_T from specified body temperature (degrees Celsius).
         This is based on the Arrhenius relationship."""
         assert T < 200., 'Temperature must be given in degrees Celsius'
@@ -553,9 +554,11 @@ class Model(object):
     @property
     def a_m(self):
         """Get the expected life span in d (for reference temperature of 20 degrees Celsius)"""
-        return self.stateAtSurvival(S=0.0001)['a']
+        if self.a_m_ is None:
+            self.a_m_ = self.state_at_survival(S=0.0001)['a']
+        return self.a_m_
 
-    def stateAtSurvival(self, S, c_T=1., f=1., delta_t=None, t_max=365*100, precision=0.001):
+    def state_at_survival(self, S, c_T=1., f=1., delta_t=None, t_max=365*100, precision=0.001):
         """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
         if not self.initialized:
             self.initialize()
@@ -602,38 +605,58 @@ class Model(object):
             'R': result[:, 10]
         }
 
-    def plotResult(self, t, L, S, R, E_H, **kwargs):
+    def plot_result(self, t, L, S, R, E_H, c_T=1., **kwargs):
         from matplotlib import pyplot
         fig = kwargs.get('fig', None)
         if fig is None:
             fig = pyplot.figure()
+
+        time_scale, time_unit = 1., 'd'
+        if t[-1] > 3*365:
+            time_scale, time_unit = 1. / 365., 'yr'
+            t *= time_scale
         ax = fig.add_subplot(411)
         ijuv = E_H.searchsorted(self.E_Hb)
+        imet = E_H.searchsorted(self.E_Hj)
         ipub = E_H.searchsorted(self.E_Hp)
-        ax.plot(t[:ijuv], L[:ijuv], '-g')
-        ax.plot(t[ijuv:ipub], L[ijuv:ipub], '-b')
-        ax.plot(t[ipub:], L[ipub:], '-r')
+        ax.plot(t[:ijuv], L[:ijuv], '-b')
+        ax.plot(t[ijuv:imet], L[ijuv:imet], '-', color='purple')
+        ax.plot(t[imet:ipub], L[imet:ipub], '-r')
+        ax.plot(t[ipub:], L[ipub:], '-k')
+        ax.set_xlim(0, t[-1])
         ax.set_title('structural length')
+        ax.set_ylabel('length (cm)')
         #ax.plot(t, L, '-b')
         ax.grid()
 
         ax = fig.add_subplot(412)
         ax.set_title('maturity')
-        ax.axhline(self.E_Hb, color='g')
-        ax.axhline(self.E_Hp, color='b')
-        ax.axvline(self.a_b, color='g')
-        ax.axvline(self.a_p, color='b')
+        ax.axhline(self.E_Hb, color='b', linestyle='--', linewidth=1.)
+        ax.axvline(time_scale * self.a_b / c_T, color='b', linestyle='--', linewidth=1.)
+        if self.E_Hj > self.E_Hb:
+            ax.axhline(self.E_Hj, color='purple', linestyle='--', linewidth=1.)
+            ax.axvline(time_scale * self.a_j / c_T, color='purple', linestyle='--', linewidth=1.)
+        ax.axhline(self.E_Hp, color='r', linestyle='--', linewidth=1.)
+        ax.axvline(time_scale * self.a_p / c_T, color='r', linestyle='--', linewidth=1.)
+        ax.set_ylabel('maturity (J)')
         ax.plot(t, E_H, '-k')
+        ax.set_xlim(0, t[-1])
         ax.grid()
 
         ax = fig.add_subplot(413)
-        ax.set_title('reproduction rate')
+        ax.set_title('reproduction')
         ax.plot(t, R, '-b')
+        ax.set_xlim(0, t[-1])
+        ax.set_ylabel('reproduction rate (1/d)')
         ax.grid()
 
         ax = fig.add_subplot(414)
         ax.set_title('survival')
         ax.plot(t, S, '-b')
+        ax.set_xlim(0, t[-1])
+        ax.set_ylim(0, 1.1)
+        ax.set_xlabel('time (%s)' % time_unit)
+        ax.set_ylabel('survival (-)')
         ax.grid()
 
         return fig

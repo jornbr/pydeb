@@ -18,7 +18,7 @@ class Sampler(object):
         self.deb_type = deb_type
         self.status = 'initializing'
 
-    def createModel(self, x):
+    def create_model(self, x):
         debmodel = pydeb.Model(type=self.deb_type)
         for name, value in zip(self.parameter_names, x):
             setattr(debmodel, name, value)
@@ -35,7 +35,7 @@ class Sampler(object):
                 for i, itf in enumerate(self.inverse_transforms):
                     samples[:, i] = itf(samples[:, i])
                 istep = 0
-            model = self.createModel(samples[istep, :])
+            model = self.create_model(samples[istep, :])
             istep += 1
             if model.valid:
                 yield model
@@ -46,11 +46,11 @@ class MCMCSampler(Sampler):
     def __init__(self, parameter_names, mean, cov, inverse_transforms, E_0_ini=None, deb_type='abj'):
         Sampler.__init__(self, parameter_names, mean, cov, inverse_transforms, E_0_ini, deb_type)
         self.likelihood = likelihood.LnLikelihood(deb_type=deb_type, E_0_ini=E_0_ini)
-        self.likelihood.addComponent(likelihood.Parameters(parameter_names, mean, cov, inverse_transforms))
+        self.likelihood.add_component(likelihood.Parameters(parameter_names, mean, cov, inverse_transforms))
 
     def sample(self, n, nburn=None):
         # Adaptive metropolis based on Haario et al. (2001)
-        names, mean, cov = self.likelihood.getPrior()
+        names, mean, cov = self.likelihood.get_prior()
 
         if nburn is None:
             nburn = int(0.1 * n)
@@ -127,7 +127,7 @@ class EnsembleRunner(threading.Thread):
         self.median_result = None
         E_0_ini = None
         if self.median_model.valid:
-            self.median_model.c_T = self.median_model.getTemperatureCorrection(self.temperature)
+            self.median_model.c_T = self.median_model.get_temperature_correction(self.temperature)
             E_0_ini = self.median_model.E_0
         else:
             print('WARNING: median model is invalid')
@@ -135,7 +135,7 @@ class EnsembleRunner(threading.Thread):
             self.sample_size *= 10
             self.sampler = MCMCSampler(features, mean, cov, inverse_transforms, deb_type=deb_type, E_0_ini=E_0_ini)
             for prior in priors:
-                self.sampler.likelihood.addComponent(prior)
+                self.sampler.likelihood.add_component(prior)
         else:
             self.sampler = Sampler(features, mean, cov, inverse_transforms, deb_type=deb_type, E_0_ini=E_0_ini)
         self.t = None
@@ -164,7 +164,7 @@ class EnsembleRunner(threading.Thread):
                     return
                 assert model.valid, 'Sampler returned an invalid model.'
                 debmodels.append(model)
-                model.c_T = model.getTemperatureCorrection(self.temperature)
+                model.c_T = model.get_temperature_correction(self.temperature)
                 for k, values in self.properties.items():
                     value = getattr(model, k)
                     if k not in pydeb.primary_parameters:
@@ -217,7 +217,7 @@ class EnsembleRunner(threading.Thread):
             median_pars = dict([(name, numpy.median(self.properties[name])) for name in self.sampler.parameter_names])
             self.median_model = self.median_model.copy(**median_pars)
             self.median_model.initialize()
-            self.median_model.c_T = self.median_model.getTemperatureCorrection(self.temperature)
+            self.median_model.c_T = self.median_model.get_temperature_correction(self.temperature)
 
         if self.median_model.valid:
             self.median_result = getResult(self.median_model)
@@ -238,7 +238,7 @@ class EnsembleRunner(threading.Thread):
         self.progress, self.status = 1., 'done'
         print('Time taken for statistics: %s' % (timeit.default_timer() - sim_end_time))
 
-    def getStatistics(self, select=None, percentiles = (2.5, 25, 50, 75, 97.5)):
+    def get_statistics(self, select=None, percentiles = (2.5, 25, 50, 75, 97.5)):
         if self.result is not None:
             return self.result
 
@@ -264,7 +264,7 @@ class EnsembleRunner(threading.Thread):
                 result[key] = [percs[i, :] for i in range(percs.shape[0])]
         return result
 
-    def getResult(self, select=None):
+    def get_result(self, select=None):
         result = {'status': self.status or self.sampler.status, 'progress': self.progress}
         result.update(self.getStatistics(select))
         return result

@@ -6,13 +6,16 @@ import numpy
 
 from . import model
 
+col_version = 'annual-checklist/2019' # 'col' for latest
+debber_url = 'https://deb.bolding-bruggeman.com'
+
 class CoLResult(dict):
     def _repr_html_(self):
         return '<table><tr><th style="text-align:left">Catalogue of Life identifier</th><th style="text-align:left">Species</th></tr>%s</table>' % ''.join(['<tr><td style="text-align:left">%s</td><td style="text-align:left"><a href="%s" target="_blank">%s</a></td></tr>' % (colid, url, name) for (colid, (name, url)) in self.items()])
 
 def get_entries(name, exact=False):
     name = name.lower()
-    f = urllib.request.urlopen('http://webservice.catalogueoflife.org/col/webservice?name=%s&response=full&format=json' % urllib.parse.quote_plus(name))
+    f = urllib.request.urlopen('http://webservice.catalogueoflife.org/%s/webservice?name=%s&response=full&format=json' % (col_version, urllib.parse.quote_plus(name)))
     data = json.load(f)
     results = []
     for entry in data.get('results', []):
@@ -31,9 +34,14 @@ def get_ids(name, exact=False):
         results[entry['id']] = (entry['name_html'], entry['url'])
     return results
 
+def get_typical_temperature(col_id):
+    f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, col_id))
+    result = json.load(f)
+    return result['typical_temperature']
+
 def get_median(col_id):
     # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
-    f = urllib.request.urlopen('https://deb.bolding-bruggeman.com?id=%s&download=mean' % col_id)
+    f = urllib.request.urlopen('%s?id=%s&download=mean' % (debber_url, col_id))
     parameters = {}
     for l in io.TextIOWrapper(f, encoding='utf-8'):
         name, value = l.rstrip('\n').split('\t')
@@ -49,21 +57,32 @@ def get_median(col_id):
         parameters[name] = value
     return parameters
 
-def get_model(name):
+def get_model_by_name(name):
     entries = get_entries(name, exact=True)
     if len(entries) == 0:
         raise Exception('No entries in found in Catalogue of Life with exact name "%s"' % name)
     elif len(entries) > 1:
         raise Exception('Multiple entries (%i) found in Catalogue of Life with exact name "%s"' % (len(entries), name))
-    entry = entries[0]
+    return get_model(entries[0])
+
+def get_model_by_id(col_id):
+    f = urllib.request.urlopen('http://webservice.catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
+    data = json.load(f)
+    return get_model(data['results'][0])
+
+def get_model(entry):
     classification = entry['classification']
     foetus = len(classification) >= 3 and classification[2]['id'] == '7a4d4854a73e6a4048d013af6416c253'
     if foetus and len(classification) >= 4:
         # Filter out egg-laying mammals (Monotremata)
         foetus = classification[3]['id'] != '7ba80933a5c268f595f28d7ef689acac'
     m = model.Model(type='stx' if foetus else 'abj')
-    print('Constructed model for %s (typified model %s)' % (entry['name'], m.type))
+    m.col_id = entry['id']
     parameters = get_median(entry['id'])
     for name, value in parameters.items():
         setattr(m, name, value)
+    m.initialize()
+    if not m.valid:
+        raise Exception('Median parameter set is not valid.')
+    print('Constructed model for %s (typified model %s)' % (entry['name'], m.type))
     return m
