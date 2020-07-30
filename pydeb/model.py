@@ -342,8 +342,6 @@ class Model(object):
         E_G_per_kap = E_G/kap
         p_M_per_kap = p_M/kap
         p_T_per_kap = p_T/kap
-        v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
-        one_minus_kappa = 1-kap
 
         self.engine = engine.create()
         for parameter in primary_parameters:
@@ -380,9 +378,13 @@ class Model(object):
                 delta_t = a_b * precision * 5
         else:
             # egg development
+
+            # First bracket the initial reserve E_0
             # At least E_Hb / (1 - kap) must have been spent during embryo development to reach E_Hb.
             # In fact, energy expenditure MUST be more because of maturity maintenance and because there
-            # needs to be reserve left over at time of hatching.
+            # needs to be reserve left over at time of hatching. This gives us a lower bound for E_0.
+            # The upper bound is found by multiplying the lower bound by 10 until the resulting
+            # maturity-at-hatching exceeds the desired maturity-at-birth E_Hb.
             E_0_min = E_0_max = E_Hb / (1 - kap)
             assert get_birth_state(E_0_min, delta_t)[2] <= E_Hb
             for _ in range(10):
@@ -478,6 +480,7 @@ class Model(object):
         }
 
     def ageAtMaturity(self, E_H, precision=0.001, c_T=1.):
+        """Get age (time since start of development) at specific maturity value."""
         if E_H not in self.maturity_states:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
             tmax = min(100 * self.a_99, 365 * 200.)
@@ -498,10 +501,14 @@ class Model(object):
         return a / c_T
 
     def evaluate(self, expression, c_T=1., locals={}):
+        """Compute expression that can contain any DEB parameter, trait, as well as additional variables provided with the "locals" argument.
+        If a temeporaure correction factor (c_T) other than 1 is specified, the result will be temperature-corrected accordingly.
+        But note that the values in locals are then assumed to already have been temperature corrected!"""
         return eval(expression, {}, ModelDict(self, c_T, locals=locals))
 
     def getTemperatureCorrection(self, T):
-        # T is temperature in Celsius
+        """Compute temperature correction factor c_T from specified body temperature (degrees Celsius).
+        This is based on the Arrhenius relationship."""
         assert T < 200., 'Temperature must be given in degrees Celsius'
         return numpy.exp(self.T_A/293.15 - self.T_A/(273.15 + T))
 
@@ -532,6 +539,7 @@ class Model(object):
             f.write('      E_0: %s\n' % self.E_0)
 
     def report(self, c_T=1.):
+        """Report implied properties/traits."""
         if not self.initialized:
             self.initialize()
         if not self.valid:
@@ -542,13 +550,19 @@ class Model(object):
         for name in shown:
             print('%s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
+    @property
+    def a_m(self):
+        """Get the expected life span in d (for reference temperature of 20 degrees Celsius)"""
+        return self.stateAtSurvival(S=0.0001)['a']
+
     def stateAtSurvival(self, S, c_T=1., f=1., delta_t=None, t_max=365*100, precision=0.001):
+        """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
         if not self.initialized:
             self.initialize()
         if not self.valid:
             return
-        assert f >= 0. and f <= 1.
-        assert c_T > 0.
+        assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
+        assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
         if delta_t is None:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
         n = int(math.ceil(t_max / delta_t))
@@ -571,8 +585,8 @@ class Model(object):
             self.initialize()
         if not self.valid:
             return
-        assert f >= 0. and f <= 1.
-        assert c_T > 0.
+        assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
+        assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
 
         result = numpy.empty((int(n / nsave) + 1, 11))
         self.engine.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
@@ -624,172 +638,3 @@ class Model(object):
 
         return fig
 
-
-def plot(ax, t, values, perc_wide=0.025, perc_narrow=0.25, ylabel=None, title=None, color='k'):
-    values.sort()
-    n = values.shape[1]
-    perc_50 = values[:, int(0.5*n)]
-    if n > 1:
-        if perc_wide is not None:
-            perc_wide_l = values[:, int(perc_wide*n)]
-            perc_wide_u = values[:, int((1-perc_wide)*n)]
-            ax.fill_between(t, perc_wide_l, perc_wide_u, facecolor=color, alpha=0.25)
-        perc_narrow_l = values[:, int(perc_narrow*n)]
-        perc_narrow_u = values[:, int((1-perc_narrow)*n)]
-        ax.fill_between(t, perc_narrow_l, perc_narrow_u, facecolor=color, alpha=0.4)
-        color = 'k'
-    ax.plot(t, perc_50, color)
-    ax.grid(True)
-    ax.set_xlabel('time (d)')
-    ax.set_xlim(t[0], t[-1])
-    if ylabel is not None:
-        ax.set_ylabel(ylabel)
-    if title is not None:
-        ax.set_title(title)
-
-
-class HTMLGenerator(object):
-    def __init__(self, *models):
-        self.models = models
-
-    def initialize(self):
-        E_0s = []
-        E_0_ini = None
-        self.valid_models = []
-        for model in self.models:
-            model.initialize(E_0_ini)
-            if model.valid:
-                E_0s.append(model.E_0)
-                E_0_ini = numpy.mean(E_0s)
-                self.valid_models.append(model)
-
-    def generate(self, workdir, color='k', label='', t_end=None, figsize=(6, 4), dpi=96):
-        import matplotlib
-        from matplotlib import pyplot
-        import matplotlib.ticker
-        relworkdir = os.path.relpath(workdir)
-
-        matplotlib.rcParams['font.sans-serif'] = 'Verdana'
-        matplotlib.rcParams['font.size'] = 9
-
-        # Collect results for all model instances
-        n = len(self.valid_models)
-        if t_end is None:
-            t_end = min(numpy.sort([model.a_99 for model in self.valid_models])[int(0.9*n)], 365.*200)
-        a_b_10 = numpy.sort([model.a_b for model in self.valid_models])[int(0.1*n)]
-        delta_t = max(0.04, a_b_10/4)
-        nt = int(t_end/delta_t)
-        nsave = max(1, int(math.floor(nt/1000)))
-        for i, model in enumerate(self.valid_models):
-            result = model.simulate(nt, delta_t, nsave)
-            t = result['t']
-            if i == 0:
-                Ls = numpy.empty((len(t), n))
-                Ss = numpy.empty((len(t), n))
-                Rs = numpy.empty((len(t), n))
-            Ls[:, i] = result['L']
-            Ss[:, i] = result['S']
-            Rs[:, i] = result['R']
-
-        strings = []
-        #strings.append('delta_t=%s, nt=%s, nsave=%s' % (delta_t, nt, nsave))
-
-        class Fmt(matplotlib.ticker.LogFormatterMathtext):
-            def __call__(self, x, pos=None):
-                return matplotlib.ticker.LogFormatterMathtext.__call__(self, 10.**x, pos)
-
-        params = 'E_0', 'a_b', 'a_p', 'L_b', 'L_p', 'L_i', 'R_i'
-
-        if n > 1:
-            fig = pyplot.figure(figsize=figsize)
-            for i, p in enumerate(params):
-                ax = fig.add_subplot(1, len(params), i+1)
-                values = numpy.array([getattr(model, p) for model in self.valid_models])
-                #ax.boxplot(values, labels=(p,), whis=(10, 90))
-                ax.violinplot(numpy.log10(values), showmedians=True)
-                ax.set_xticks(())
-                ax.set_title(p)
-                ax.yaxis.set_major_locator(matplotlib.ticker.MultipleLocator())
-                ax.yaxis.set_major_formatter(Fmt())
-                # ax.set_yscale('log')
-            fig.tight_layout()
-            fig.savefig(os.path.join(workdir, 'boxplots.png'), dpi=dpi)
-            strings.append('<img alt="violin plots of derived life history parameters" src="%s"/><br>' % urllib.pathname2url('%s/boxplots.png' % relworkdir))
-        else:
-            strings.append('<table>')
-            strings.append('<thead><tr><th>parameter</th><th>value</th></tr></thead>')
-            strings.append('<tbody>')
-            for i, p in enumerate(params):
-                strings.append('  <tr><td>%s</td><td>%.3g</td></tr>' % (p, getattr(self.valid_models[0], p)))
-            strings.append('</tbody>')
-            strings.append('</table>')
-
-        fig = pyplot.figure(figsize=figsize)
-        ax = fig.gca()
-
-        ax.cla()
-        plot(ax, t, Ls, perc_wide=0.1, title='growth', ylabel='structural length (cm)', color='b')
-        ax.set_ylim(0, None)
-        fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'tL.png'), dpi=dpi)
-        strings.append('<img alt="time series of structural length" src="%s"/><br>' % urllib.pathname2url('%s/tL.png' % relworkdir))
-
-        ax.cla()
-        plot(ax, t, Rs, perc_wide=0.1, title='reproduction', ylabel='reproduction rate (#/d)', color='g')
-        ax.set_ylim(0, None)
-        fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'tR.png'), dpi=dpi)
-        strings.append('<img alt="time series of reproduction rate" src="%s"/><br>' % urllib.pathname2url('%s/tR.png' % relworkdir))
-
-        ax.cla()
-        plot(ax, t, Ss, perc_wide=0.1, title='survival', ylabel='survival (-)', color='r')
-        ax.set_ylim(0., 1.)
-        fig.tight_layout()
-        fig.savefig(os.path.join(workdir, 'tS.png'), dpi=dpi)
-        strings.append('<img alt="time series of survival" src="%s"/><br>' % urllib.pathname2url('%s/tS.png' % relworkdir))
-
-        return '\n'.join(strings)
-
-
-if __name__ == '__main__':
-    model = Model()
-    import argparse
-    import io
-    from matplotlib import pyplot
-    import timeit
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--traits', default='traits.txt')
-    parser.add_argument('--c_T', type=float, default=1.)
-    parser.add_argument('species')
-    args = parser.parse_args()
-    with io.open(args.traits, 'rU', encoding='utf-8') as f:
-        labels = f.readline().rstrip('\n').split('\t')
-        for l in f:
-            items = l.rstrip('\n').split('\t')
-            if items[0].lower() == args.species.lower():
-                par2value = {}
-                for name, item in zip(labels[2:], items[2:]):
-                    if item != '':
-                        par2value[name.split(' (')[0]] = float(item)
-                break
-    print('Parameters for %s:' % args.species)
-    for name, value in par2value.items():
-        print('%s: %s' % (name, value))
-        setattr(model, name, value)
-    model.report(c_T=args.c_T)
-    delta_t = 0.1
-    start = timeit.default_timer()
-    result_c = model.simulate(int(model.a_99/delta_t), delta_t, c_T=args.c_T)
-    print('C duration: %s s' % (timeit.default_timer() - start))
-    model.cmodel = None
-    start = timeit.default_timer()
-    result_py = model.simulate(int(model.a_99/delta_t), delta_t, c_T=args.c_T)
-    print('Python duration: %s s' % (timeit.default_timer() - start))
-    fig = model.plotResult(**result_c)
-    model.plotResult(fig=fig, **result_py)
-    print('Relative differences (C vs Python):')
-    for variable in ('L', 'E', 'E_H', 'R', 'S'):
-        L_diff = result_c[variable] - result_py[variable]
-        vmin, vmax = min(result_c[variable].min(), result_py[variable].min()), min(result_c[variable].max(), result_py[variable].max())
-        print('  %s: %s - %s (range = %s)' % (variable, L_diff.min()/(vmax-vmin), L_diff.max()/(vmax-vmin), vmax-vmin))
-    pyplot.show()
