@@ -254,7 +254,7 @@ class EnsembleRunner(threading.Thread):
         if self.median_result is not None:
             result['median'] = dict([(key, self.median_result[key]) for key in selected_outputs])
         n = self.nmodels
-        if n > 0:
+        if n > 1:
             result['properties'] = dict([(key, getStatistics(values[:n])) for key, values in self.properties.items()])
         n = self.nresults
         if n > 0 and selected_outputs:
