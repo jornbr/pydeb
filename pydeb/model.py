@@ -117,6 +117,9 @@ temperature_correction = {
     'a_j': -1,
     'a_p': -1,
     'a_99': -1,
+    'a_S10': -1,
+    'a_S01': -1,
+    'a_m': -1,
     'R_i': 1,
     'r_B': 1,
     'E_m': 0,
@@ -197,9 +200,11 @@ class ModelDict(object):
             return eval(compound_variables[key], {}, self)
         if not hasattr(self.model, key):
             raise KeyError()
+        assert key in temperature_correction, 'No temperature correction available for %s' % key
         return getattr(self.model, key) * self.c_T**temperature_correction[key]
 
     def __contains__(self, key):
+        print('BOOGOO 1', key)
         return key in self.locals or hasattr(self.model, key) or key in compound_variables
 
 
@@ -557,6 +562,9 @@ class Model(object):
         if self.a_m_ is None:
             self.a_m_ = self.state_at_survival(S=0.0001)['a']
         return self.a_m_
+
+    a_S01 = property(lambda self: self.state_at_survival(0.01)['t'])
+    a_S10 = property(lambda self: self.state_at_survival(0.10)['t'])
 
     def state_at_survival(self, S, c_T=1., f=1., delta_t=None, t_max=365*100, precision=0.001):
         """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
