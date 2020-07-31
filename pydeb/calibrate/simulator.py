@@ -234,7 +234,7 @@ class EnsembleRunner(threading.Thread):
         self.progress, self.status = 0.95, 'computing statistics'
         sim_end_time = timeit.default_timer()
         print('Time taken for model simulations: %s' % (sim_end_time - init_end_time))
-        self.result = self.getStatistics()
+        self.result = self.get_statistics()
         self.progress, self.status = 1., 'done'
         print('Time taken for statistics: %s' % (timeit.default_timer() - sim_end_time))
 
@@ -266,5 +266,5 @@ class EnsembleRunner(threading.Thread):
 
     def get_result(self, select=None):
         result = {'status': self.status or self.sampler.status, 'progress': self.progress}
-        result.update(self.getStatistics(select))
+        result.update(self.get_statistics(select))
         return result
