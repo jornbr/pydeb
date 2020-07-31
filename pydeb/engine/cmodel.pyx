@@ -162,6 +162,8 @@ cdef class Model:
         with nogil:
             isave = 0
             E, L, E_H, E_R, Q, H, S, cumR, cumt = self.E_0, 0., 0., 0., 0., 0., 1., 0., 0.
+            if devel_state == -1:
+                E = 0.
             for i in range(n + 1):
                 save = (S < S_crit or i == n) if nsave == 0 else i % nsave == 0
                 if save:
@@ -186,7 +188,7 @@ cdef class Model:
                     # t = i * delta_t, but here were are computing the state for the next time step, i + 1
                     p_C = v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3
                     L = onethird * v * (i + 1) * delta_t
-                    E = L3 * E_m
+                    E = L * L * L * E_m
                 else:
                     invdenom = 1. / (E + E_G_per_kap * L3)
                     p_C = E * (v_E_G_plus_P_T_per_kap * s * L2 + p_M_per_kap * L3) * invdenom
