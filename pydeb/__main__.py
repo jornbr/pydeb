@@ -4,11 +4,11 @@ from . import infer
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('species')
-    parser.add_argument('--c_T', type=float, default=None)
-    parser.add_argument('--t', type=float, default=None)
+    parser.add_argument('taxon', help='Name of the species or higher-rank taxon you want the DEB model for. For instance, "Asterias rubens" or "Mammalia"')
+    parser.add_argument('--c_T', type=float, default=None, help="Temperature correction factor (dimensionless)")
+    parser.add_argument('--t', type=float, default=None, help="Time period to simulate")
     args = parser.parse_args()
-    model = infer.get_model_by_name(args.species)
+    model = infer.get_model_by_name(args.taxon)
     if args.c_T is None:
         T = infer.get_typical_temperature(model.col_id)
         args.c_T = model.get_temperature_correction(T)
