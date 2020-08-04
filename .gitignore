@@ -6,3 +6,5 @@
 *.c
 *.pyc
 /pydeb/engine/*.html
+/dist
+/pydeb.egg-info
