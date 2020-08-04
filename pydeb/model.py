@@ -37,6 +37,7 @@ long_names = {
     'h_a': 'Weibull aging acceleration',
     's_G': 'Gompertz stress coefficient',
     't_0': 'time at start of development',
+    'L': 'structural length',
     'L_b': 'structural length at birth',
     'L_j': 'structural length at metamorphosis',
     'L_p': 'structural length at puberty',
@@ -45,6 +46,7 @@ long_names = {
     'a_j': 'age at metamorphosis',
     'a_p': 'age at puberty',
     'a_99': 'age when reaching 99% of ultimate structural length',
+    'R': 'reproduction rate',
     'R_i': 'ultimate reproduction rate',
     'r_B': 'von Bertalanffy growth rate',
     'E_m': 'reserve capacity',
@@ -73,6 +75,7 @@ units = {
     'h_a': '1/d^2',
     's_G': '-',
     't_0': 'd',
+    'L': 'cm',
     'L_b': 'cm',
     'L_j': 'cm',
     'L_p': 'cm',
@@ -81,6 +84,7 @@ units = {
     'a_j': 'd',
     'a_p': 'd',
     'a_99': 'd',
+    'R': '1/d',
     'R_i': '1/d',
     'r_B': '1/d',
     'E_m': 'J/cm^3',
@@ -204,7 +208,6 @@ class ModelDict(object):
         return getattr(self.model, key) * self.c_T**temperature_correction[key]
 
     def __contains__(self, key):
-        print('BOOGOO 1', key)
         return key in self.locals or hasattr(self.model, key) or key in compound_variables
 
 
@@ -334,7 +337,7 @@ class Model(object):
         k_J = self.k_J
         E_m = self.p_Am / self.v  # defined at f=1
         g = E_G / kap / E_m
-        k_M = self.p_M / E_G
+        self.k_M = self.p_M / E_G
         L_m = kap * self.p_Am / self.p_M
         L_T = self.p_T / self.p_M
         p_M = self.p_M
@@ -544,7 +547,7 @@ class Model(object):
             f.write('      L_j: %s\n' % self.L_j)
             f.write('      E_0: %s\n' % self.E_0)
 
-    def report(self, c_T=1.):
+    def describe(self, c_T=1.):
         """Report implied properties/traits."""
         if not self.initialized:
             self.initialize()
@@ -552,9 +555,13 @@ class Model(object):
             print('This parameter set is not valid.')
             return
         d = ModelDict(self, c_T)
-        shown = ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i')
-        for name in shown:
-            print('%s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
+        print('c_T [temperature correction factor]: %.3f' % c_T)
+        print('Primary parameters:')
+        for name in primary_parameters:
+            print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
+        print('Implied traits:')
+        for name in ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i'):
+            print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
     @property
     def a_m(self):

@@ -11,7 +11,7 @@ debber_url = 'https://deb.bolding-bruggeman.com'
 
 class CoLResult(dict):
     def _repr_html_(self):
-        return '<table><tr><th style="text-align:left">Catalogue of Life identifier</th><th style="text-align:left">Species</th></tr>%s</table>' % ''.join(['<tr><td style="text-align:left">%s</td><td style="text-align:left"><a href="%s" target="_blank">%s</a></td></tr>' % (colid, url, name) for (colid, (name, url)) in self.items()])
+        return '<table><tr><th style="text-align:left">Catalogue of Life identifier</th><th style="text-align:left">Taxon</th></tr>%s</table>' % ''.join(['<tr><td style="text-align:left">%s</td><td style="text-align:left"><a href="%s" target="_blank">%s</a></td></tr>' % (colid, url, name) for (colid, (name, url)) in self.items()])
 
 def get_entries(name, exact=False):
     name = name.lower()
@@ -71,7 +71,7 @@ def get_model_by_id(col_id):
     return get_model(data['results'][0])
 
 def get_model(entry):
-    classification = entry['classification']
+    classification = entry['classification'] + [entry]
     foetus = len(classification) >= 3 and classification[2]['id'] == '7a4d4854a73e6a4048d013af6416c253'
     if foetus and len(classification) >= 4:
         # Filter out egg-laying mammals (Monotremata)
@@ -84,5 +84,5 @@ def get_model(entry):
     m.initialize()
     if not m.valid:
         raise Exception('Median parameter set is not valid.')
-    print('Constructed model for %s (typified model %s)' % (entry['name'], m.type))
+    print('Constructed model for %s %s (typified model %s)' % (entry['rank'].lower(), entry['name'], m.type))
     return m
