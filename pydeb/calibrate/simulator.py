@@ -144,6 +144,7 @@ class EnsembleRunner(threading.Thread):
         self.ensemble = None
         self.nmodels = 0
         self.nresults = 0
+        self._bar = None
         self.start()
 
     def run(self):
@@ -173,8 +174,7 @@ class EnsembleRunner(threading.Thread):
                 for ipar, k in enumerate(self.sampler.parameter_names):
                     ensemble[i, ipar] = getattr(model, k)
                 if i % 100 == 0:
-                    self.progress = (0.5 * i) / self.sample_size
-                    self.status = 'initializing model %i of %i' % (i, self.sample_size)
+                    self.update_progress((0.5 * i) / self.sample_size, 'initializing model %i of %i' % (i, self.sample_size))
                     self.nmodels = i + 1
             return debmodels
 
@@ -224,19 +224,24 @@ class EnsembleRunner(threading.Thread):
 
         for i, model in enumerate(debmodels):
             if i % 100 == 0:
-                self.progress = 0.5 + (0.45 * i) / n
-                self.status = 'simulating with model %i of %i' % (i, n)
+                self.update_progress(0.5 + (0.45 * i) / n, 'simulating with model %i of %i' % (i, n))
             for key, values in getResult(model).items():
                 self.results[key][i, :] = values
             if i % 100 == 0:
                 self.nresults = i + 1
         self.nresults = n
-        self.progress, self.status = 0.95, 'computing statistics'
+        self.update_progress(0.95, 'computing statistics')
         sim_end_time = timeit.default_timer()
         print('Time taken for model simulations: %s' % (sim_end_time - init_end_time))
         self.result = self.get_statistics()
-        self.progress, self.status = 1., 'done'
+        self.update_progress(1., 'done')
         print('Time taken for statistics: %s' % (timeit.default_timer() - sim_end_time))
+
+    def update_progress(self, value, status):
+        self.progress = value
+        self.status = status
+        if self._bar is not None:
+            self._bar.value = value
 
     def get_statistics(self, select=None, percentiles = (2.5, 25, 50, 75, 97.5)):
         if self.result is not None:
@@ -268,3 +273,9 @@ class EnsembleRunner(threading.Thread):
         result = {'status': self.status or self.sampler.status, 'progress': self.progress}
         result.update(self.get_statistics(select))
         return result
+
+    def get_progress_bar(self):
+        if self._bar is None:
+            import ipywidgets
+            self._bar = ipywidgets.FloatProgress(value=0.0, min=0.0, max=1.0)
+        return self._bar
