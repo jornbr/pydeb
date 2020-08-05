@@ -39,23 +39,48 @@ def get_typical_temperature(col_id):
     result = json.load(f)
     return result['typical_temperature']
 
+class ParameterEstimates(object):
+    def __init__(self, col_id):
+        # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
+        self.col_id = col_id
+        f = urllib.request.urlopen('%s?id=%s&download=mean' % (debber_url, col_id))
+        self.names, self.units, self.transforms, self.mean = [], [], [], []
+        for l in io.TextIOWrapper(f, encoding='utf-8'):
+            name, value = l.rstrip('\n').split('\t')
+            name, units = name[:-1].split(' (', 1)
+            parts = units.split(' ', 1)
+            transform = None
+            if parts[0] in ('logit', 'ln'):
+                transform = parts[0]
+                units = '-' if len(parts) == 1 else parts[1]
+            self.names.append(name)
+            self.units.append(units)
+            self.transforms.append(transform)
+            self.mean.append(float(value))
+        self._cov = None
+
+    @property
+    def inverse_transforms(self):
+        inverse_transforms = {None: lambda x: x, 'ln': numpy.exp, 'logit': lambda x: 1. / (1. + numpy.exp(-x))}
+        return [inverse_transforms[t] for t in self.transforms]
+
+    @property
+    def cov(self):
+        if self._cov is None:
+            self._cov = numpy.empty((len(self.names), len(self.names)))
+            f = urllib.request.urlopen('%s?id=%s&download=cov' % (debber_url, self.col_id))
+            f.readline()
+            for i, l in enumerate(io.TextIOWrapper(f, encoding='utf-8')):
+                values = l.rstrip('\n').split('\t')
+                name = values.pop(0).split(' (', 1)[0]
+                assert len(values )== len(self.names)
+                assert name == self.names[i], 'Parameter names in mean and covariance files do not match: %s vs. %s' % (self.names[i], name)
+                self._cov[i, :] = values
+        return self._cov
+
 def get_median(col_id):
-    # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
-    f = urllib.request.urlopen('%s?id=%s&download=mean' % (debber_url, col_id))
-    parameters = {}
-    for l in io.TextIOWrapper(f, encoding='utf-8'):
-        name, value = l.rstrip('\n').split('\t')
-        name, units = name[:-1].split(' (', 1)
-        value = float(value)
-        parts = units.split(' ', 1)
-        if parts[0] == 'logit':
-            value = 1. / (1. + numpy.exp(-value))
-            units = '-' if len(parts) == 1 else parts[1]
-        elif parts[0] == 'ln':
-            value = numpy.exp(value)
-            units = '-' if len(parts) == 1 else parts[1]
-        parameters[name] = value
-    return parameters
+    estimates = ParameterEstimates(col_id)
+    return dict([(name, it(value)) for name, value, it in zip(estimates.names, estimates.mean, estimates.inverse_transforms)])
 
 def get_model_by_name(name):
     entries = get_entries(name, exact=True)
