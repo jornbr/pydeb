@@ -312,7 +312,8 @@ class Model(object):
     def copy(self, **parameters):
         clone = Model(type=parameters.get('type', self.type))
         for p in primary_parameters + entry_parameters:
-            setattr(clone, p, parameters.get(p, getattr(self, p)))
+            if hasattr(self, p):
+                setattr(clone, p, parameters.get(p, getattr(self, p)))
         return clone
 
     def initialize(self, E_0_ini=0., verbose=False, precision=0.001):
