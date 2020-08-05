@@ -144,6 +144,7 @@ class EnsembleRunner(threading.Thread):
         self.ensemble = None
         self.nmodels = 0
         self.nresults = 0
+        self._out = None
         self._bar = None
         self.start()
 
@@ -242,6 +243,7 @@ class EnsembleRunner(threading.Thread):
         self.status = status
         if self._bar is not None:
             self._bar.value = value
+            self._out.value = status
 
     def get_statistics(self, select=None, percentiles = (2.5, 25, 50, 75, 97.5)):
         if self.result is not None:
@@ -277,5 +279,6 @@ class EnsembleRunner(threading.Thread):
     def get_progress_bar(self):
         if self._bar is None:
             import ipywidgets
+            self._out = ipywidgets.Text()
             self._bar = ipywidgets.FloatProgress(value=0.0, min=0.0, max=1.0)
-        return self._bar
+        return ipywidgets.VBox([self._bar, self._out])
