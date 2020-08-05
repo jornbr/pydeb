@@ -53,6 +53,7 @@ long_names = {
     'E_0': 'initial reserve',
     's_M': 'acceleration at metamorphosis',
     'del_M': 'shape coefficient (structural : physical length)',
+    'S': 'survival',
 }
 
 units = {
@@ -91,6 +92,7 @@ units = {
     'E_0': 'J',
     's_M': '-',
     'del_M': '-',
+    'S': '-',
 }
 
 temperature_correction = {
