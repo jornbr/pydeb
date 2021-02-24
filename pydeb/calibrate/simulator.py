@@ -26,7 +26,7 @@ class Sampler(object):
         debmodel.initialize(self.E_0_ini)
         return debmodel
 
-    def sample(self, n: int):
+    def sample(self, n: int) -> Iterable[Optional[pydeb.Model]]:
         samples = numpy.empty((1000, self.mean.size))
         istep = samples.shape[0]
         count = 0
@@ -49,7 +49,7 @@ class MCMCSampler(Sampler):
         self.likelihood = likelihood.LnLikelihood(deb_type=deb_type, E_0_ini=E_0_ini)
         self.likelihood.add_component(likelihood.Parameters(parameter_names, mean, cov, inverse_transforms))
 
-    def sample(self, n: int, nburn: Optional[int]=None):
+    def sample(self, n: int, nburn: Optional[int]=None) -> Iterable[Optional[pydeb.Model]]:
         # Adaptive metropolis based on Haario et al. (2001)
         names, mean, cov = self.likelihood.get_prior()
 

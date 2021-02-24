@@ -1,24 +1,24 @@
-import sys
-import os.path
 import collections
-from typing import Iterable, Mapping, Optional
+from typing import Iterable, Mapping, Optional, Callable, Tuple, MutableMapping
 
 import numpy
 
-sys.path.append(os.path.join(os.path.dirname(__file__), 'pydeb'))
 from .. import model as pydeb
 
 null_transform = lambda x: x
 
 class Component(object):
+    def __init__(self):
+        self.global_names: Iterable[str] = []
+
     def get_prior(self):
         return (), (), ()
 
-    def configure(self, model, values):
+    def configure(self, model: pydeb.Model, values):
         pass
 
-    def calculate_ln_likelihood(self, model, values):
-        return 0
+    def calculate_ln_likelihood(self, model: pydeb.Model, values) -> float:
+        return 0.
 
 class Parameters(Component):
     def __init__(self, names: Iterable[str], mean, cov, transforms):
@@ -31,30 +31,30 @@ class Parameters(Component):
     def get_prior(self):
         return self.names, self.mean, self.cov
 
-    def configure(self, model, values):
+    def configure(self, model: pydeb.Model, values):
         for name, value, transform in zip(self.names, values, self.transforms):
             setattr(model, name, transform(value))
 
-    def calculate_ln_likelihood(self, model, values):
+    def calculate_ln_likelihood(self, model: pydeb.Model, values) -> float:
         dx = values - self.mean
         return -0.5 * dx.dot(self.invcov).dot(dx)
 
 class ImpliedProperty(Component):
-    def __init__(self, expression, value, sd, transform=null_transform, temperature=20):
+    def __init__(self, expression: str, value: float, sd: float, transform: Callable[[float], float]=null_transform, temperature: float=20.):
         self.expression = compile(expression, '<string>', 'eval')
         self.value = value
         self.sd = sd
         self.transform = transform
         self.temperature = temperature
 
-    def calculate_ln_likelihood(self, model, values):
+    def calculate_ln_likelihood(self, model: pydeb.Model, values) -> float:
         c_T = model.get_temperature_correction(self.temperature)
         value_mod = model.evaluate(self.expression, c_T=c_T)
         z = (self.transform(value_mod) - self.value) / self.sd
         return -0.5 * z * z
 
 class ExpressionAtSurvival(Component):
-    def __init__(self, S, expression, value, sd, transform=null_transform, temperature=20):
+    def __init__(self, S: float, expression: str, value: float, sd: float, transform: Callable[[float], float]=null_transform, temperature: float=20.):
         self.expression = compile(expression, '<string>', 'eval')
         self.value = value
         self.sd = sd
@@ -62,7 +62,7 @@ class ExpressionAtSurvival(Component):
         self.temperature = temperature
         self.S = S
 
-    def calculate_ln_likelihood(self, model, values):
+    def calculate_ln_likelihood(self, model: pydeb.Model, values) -> float:
         c_T = model.get_temperature_correction(self.temperature)
         result = model.state_at_survival(self.S, c_T=c_T)
         value_mod = model.evaluate(self.expression, c_T=c_T, locals=result)
@@ -71,7 +71,7 @@ class ExpressionAtSurvival(Component):
         return -0.5 * z * z
 
 class TimeSeries(Component):
-    def __init__(self, t, temperature: float=20, offset_reference: Optional[str]=None, offset: float=0., offset_type: str='t'):
+    def __init__(self, t, temperature: float=20., offset_reference: Optional[str]=None, offset: float=0., offset_type: str='t'):
         self.t = numpy.array(t)
         self.offset = offset
         self.offset_reference = offset_reference
@@ -141,9 +141,9 @@ class LnLikelihood(object):
     def __init__(self, deb_type: str='abj', E_0_ini: Optional[float]=None):
         self.deb_type = deb_type
         self.E_0_ini = E_0_ini
-        self.components = collections.OrderedDict()
+        self.components: MutableMapping[str, Component] = collections.OrderedDict()
 
-    def add_component(self, component, name=None):
+    def add_component(self, component: Component, name: Optional[str]=None):
         assert isinstance(component, Component), 'prior information must be of type likelihood.Component'
         if name is None:
             name = '%i' % len(self.components)
@@ -167,7 +167,7 @@ class LnLikelihood(object):
             i += n
         return names, mean, cov
 
-    def calculate(self, name2value: Mapping[str, float]):
+    def calculate(self, name2value: Mapping[str, float]) -> Tuple[pydeb.Model, float]:
         # Create model object
         model = pydeb.Model(type=self.deb_type)
 
@@ -183,7 +183,7 @@ class LnLikelihood(object):
         model.initialize(self.E_0_ini)
 
         # Calculate ln likelihood by summing contribution of each component
-        lnl = 0
+        lnl = 0.
         if model.valid:
             for component, current_name2value in zip(self.components.values(), component_pars):
                 lnl += component.calculate_ln_likelihood(model, current_name2value)
