@@ -603,11 +603,10 @@ class Model(object):
             'R': result[0, 10]
         }
 
-    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1.) -> Optional[Mapping[str, numpy.ndarray]]:
+    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1.) -> Mapping[str, numpy.ndarray]:
         if not self.initialized:
             self.initialize()
-        if not self.valid:
-            return
+        assert self.valid, 'Model parameterisation is not valid'
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
         assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
 
