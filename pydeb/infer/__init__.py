@@ -5,6 +5,7 @@ import io
 import numpy
 
 from .. import model
+from . import database
 
 col_version = 'annual-checklist/2019' # 'col' for latest
 debber_url = 'https://deb.bolding-bruggeman.com'
