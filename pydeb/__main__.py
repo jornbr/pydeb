@@ -1,5 +1,4 @@
 import argparse
-from matplotlib import pyplot
 from . import infer
 
 def main():
@@ -16,6 +15,7 @@ def main():
         print('Body temperature: %.2f degrees Celsius' % (T,))
     model.describe(c_T=args.c_T)
     if args.simulate:
+        from matplotlib import pyplot
         delta_t = 0.1
         result = model.simulate(int((args.time or max(model.a_99, model.a_m) / args.c_T) / delta_t), delta_t, c_T=args.c_T)
         fig = model.plot_result(**result, c_T=args.c_T)
