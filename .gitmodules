@@ -1,0 +1,3 @@
+[submodule "pydeb/infer/data"]
+	path = pydeb/infer/data
+	url = ../pydeb_infer_data.git

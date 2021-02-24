@@ -14,7 +14,7 @@ setup(name='pydeb',
       author_email='jorn@bolding-bruggeman.com',
       license='GPL',
       packages=find_packages(),
-      ext_modules = cythonize(['pydeb/engine/optimize.pyx', 'pydeb/engine/cmodel.pyx'], language_level=3),
+      package_data={'pydeb.infer': ['data/*']},
       include_dirs=[numpy.get_include()],
       install_requires=['numpy'],
       classifiers=[ # Note: classifiers MUST match options on https://pypi.org/classifiers/ for PyPI submission
