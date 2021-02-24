@@ -4,7 +4,7 @@ import json
 import io
 import numpy
 
-from . import model
+from .. import model
 
 col_version = 'annual-checklist/2019' # 'col' for latest
 debber_url = 'https://deb.bolding-bruggeman.com'
@@ -13,7 +13,7 @@ class CoLResult(dict):
     def _repr_html_(self):
         return '<table><tr><th style="text-align:left">Catalogue of Life identifier</th><th style="text-align:left">Taxon</th></tr>%s</table>' % ''.join(['<tr><td style="text-align:left">%s</td><td style="text-align:left"><a href="%s" target="_blank">%s</a></td></tr>' % (colid, url, name) for (colid, (name, url)) in self.items()])
 
-def get_entries(name, exact=False):
+def get_entries(name: str, exact: bool=False):
     name = name.lower()
     f = urllib.request.urlopen('http://webservice.catalogueoflife.org/%s/webservice?name=%s&response=full&format=json' % (col_version, urllib.parse.quote_plus(name)))
     data = json.load(f)
@@ -28,19 +28,19 @@ def get_entries(name, exact=False):
         results.append(entry.get('accepted_name', entry))
     return results
 
-def get_ids(name, exact=False):
+def get_ids(name: str, exact: bool=False):
     results = CoLResult()
     for entry in get_entries(name, exact):
         results[entry['id']] = (entry['name_html'], entry['url'])
     return results
 
-def get_typical_temperature(col_id):
+def get_typical_temperature(col_id: str):
     f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, col_id))
     result = json.load(f)
     return result['typical_temperature']
 
 class ParameterEstimates(object):
-    def __init__(self, col_id):
+    def __init__(self, col_id: str):
         # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
         self.col_id = col_id
         f = urllib.request.urlopen('%s?id=%s&download=mean' % (debber_url, col_id))
@@ -78,11 +78,11 @@ class ParameterEstimates(object):
                 self._cov[i, :] = values
         return self._cov
 
-def get_median(col_id):
+def get_median(col_id: str):
     estimates = ParameterEstimates(col_id)
     return dict([(name, it(value)) for name, value, it in zip(estimates.names, estimates.mean, estimates.inverse_transforms)])
 
-def get_model_by_name(name):
+def get_model_by_name(name: str):
     entries = get_entries(name, exact=True)
     if len(entries) == 0:
         raise Exception('No entries in found in Catalogue of Life with exact name "%s"' % name)
@@ -90,7 +90,7 @@ def get_model_by_name(name):
         raise Exception('Multiple entries (%i) found in Catalogue of Life with exact name "%s"' % (len(entries), name))
     return get_model(entries[0])
 
-def get_model_by_id(col_id):
+def get_model_by_id(col_id: str):
     f = urllib.request.urlopen('http://webservice.catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
     data = json.load(f)
     return get_model(data['results'][0])

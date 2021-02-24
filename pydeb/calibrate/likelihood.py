@@ -1,6 +1,7 @@
 import sys
 import os.path
 import collections
+from typing import Iterable, Mapping, Optional
 
 import numpy
 
@@ -20,7 +21,7 @@ class Component(object):
         return 0
 
 class Parameters(Component):
-    def __init__(self, names, mean, cov, transforms):
+    def __init__(self, names: Iterable[str], mean, cov, transforms):
         self.names = names
         self.mean = mean
         self.cov = cov
@@ -70,7 +71,7 @@ class ExpressionAtSurvival(Component):
         return -0.5 * z * z
 
 class TimeSeries(Component):
-    def __init__(self, t, temperature=20, offset_reference=None, offset=0., offset_type='t'):
+    def __init__(self, t, temperature: float=20, offset_reference: Optional[str]=None, offset: float=0., offset_type: str='t'):
         self.t = numpy.array(t)
         self.offset = offset
         self.offset_reference = offset_reference
@@ -79,7 +80,7 @@ class TimeSeries(Component):
         self.temperature = temperature
         self.data = []
 
-    def add_series(self, expression, values, sd=None, transform=None):
+    def add_series(self, expression: str, values, sd=None, transform=None):
         assert sd is not None or len(values) > 1, 'Cannot estimate standard deviation with only one observation.'
         assert sd is None or sd > 0, 'Standard deviation must be > 0, or None for it to be estimated (it is %s)' % sd
         expression = {'WM': 'L**3 + E * w_E / mu_E / d_E'}.get(expression, expression)
@@ -93,7 +94,7 @@ class TimeSeries(Component):
             return ['%s_offset' % self.offset_type], [self.offset[0]], [self.offset[1]**2]
         return Component.get_prior(self)
 
-    def calculate(self, model, values):
+    def calculate(self, model: pydeb.Model, values):
         # Compute temperature correction factor
         c_T = model.get_temperature_correction(self.temperature)
 
@@ -121,7 +122,7 @@ class TimeSeries(Component):
 
         return t_mod, results
 
-    def calculate_ln_likelihood(self, model, values):
+    def calculate_ln_likelihood(self, model: pydeb.Model, values):
         t_mod, results = self.calculate(model, values)
 
         lnl = 0
@@ -137,7 +138,7 @@ class TimeSeries(Component):
         return lnl
 
 class LnLikelihood(object):
-    def __init__(self, deb_type='abj', E_0_ini=None):
+    def __init__(self, deb_type: str='abj', E_0_ini: Optional[float]=None):
         self.deb_type = deb_type
         self.E_0_ini = E_0_ini
         self.components = collections.OrderedDict()
@@ -166,7 +167,7 @@ class LnLikelihood(object):
             i += n
         return names, mean, cov
 
-    def calculate(self, name2value):
+    def calculate(self, name2value: Mapping[str, float]):
         # Create model object
         model = pydeb.Model(type=self.deb_type)
 

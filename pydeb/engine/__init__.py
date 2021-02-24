@@ -1,4 +1,6 @@
 import sys
+import math
+from typing import Mapping
 
 import numpy
 
@@ -17,7 +19,7 @@ class PyEngine(object):
     def __init__(self):
         pass
 
-    def get_birth_state(self, E_0, delta_t=1.):
+    def get_birth_state(self, E_0: float, delta_t: float=1.):
         t, E, L, E_H = 0., float(E_0), 0., 0.
         done = False
         while not done:
@@ -39,7 +41,7 @@ class PyEngine(object):
                 return -1, -1, -1
         return t, E, L
 
-    def find_maturity(self, L_ini, E_H_ini, E_H_target, delta_t=1., s_M=1., t_max=numpy.inf, t_ini=0.):
+    def find_maturity(self, L_ini: float, E_H_ini: float, E_H_target: float, delta_t: float=1., s_M: float=1., t_max: float=numpy.inf, t_ini: float=0.):
         assert E_H_target >= E_H_ini
         exp = math.exp
         r_B = self.r_B
@@ -62,7 +64,7 @@ class PyEngine(object):
         L = (L_i - L_ini)*(1. - exp(-r_B*t)) + L_ini  # p 52
         return t_ini + t, L
 
-    def find_maturity_v1(self, L_ini, E_H_ini, E_H_target, delta_t=1., t_max=numpy.inf, t_ini=0.):
+    def find_maturity_v1(self, L_ini: float, E_H_ini: float, E_H_target: float, delta_t: float=1., t_max: float=numpy.inf, t_ini=0.):
         assert E_H_target >= E_H_ini
         exp = math.exp
         V_b = L_ini**3
@@ -93,7 +95,7 @@ class PyEngine(object):
         L = L_ini*exp(r/3*t)
         return t_ini + t, L
 
-    def integrate(self, n, delta_t, nsave, result, c_T, f, devel_state_ini):
+    def integrate(self, n: int, delta_t: float, nsave: int, result, c_T: float, f: float, devel_state_ini: int) -> Mapping[str, numpy.ndarray]:
         kap = self.kap
         v = self.v*c_T
         k_J = self.k_J*c_T
@@ -119,7 +121,7 @@ class PyEngine(object):
         v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
         one_minus_kap = 1-kap
 
-        def dy(y, t0):
+        def dy(y, t0: float):
             E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
             L2 = L*L
             L3 = L*L2

@@ -1,13 +1,8 @@
-from __future__ import print_function
-
-import sys
-import os
 import math
-import urllib
+from typing import Dict, Any, Mapping, Optional, Tuple
+import collections.abc
 
 import numpy
-
-import scipy.optimize
 
 from . import engine
 
@@ -29,7 +24,9 @@ long_names = {
     'p_M': 'volume-specific somatic maintenance',
     'p_T': 'surface-specific somatic maintenance',
     'k_J': 'maturity maintenance rate coefficient',
+    'E': 'reserve',
     'E_G': 'specific cost for structure',
+    'E_H': 'maturity',
     'E_Hb': 'maturity at birth',
     'E_Hj': 'maturity at metamorphosis',
     'E_Hx': 'maturity at weaning/fledgling',
@@ -68,7 +65,9 @@ units = {
     'p_M': 'J/d.cm^3',
     'p_T': 'J/d.cm^2',
     'k_J': '1/d',
+    'E': 'J',
     'E_G': 'J/cm^3',
+    'E_H': 'J',
     'E_Hb': 'J',
     'E_Hj': 'J',
     'E_Hx': 'J',
@@ -152,7 +151,7 @@ ddot_symbols = ('h',)
 greek_symbols = {'kap': 'kappa', 'del': 'delta'}
 
 
-def symbol2html(symbol):
+def symbol2html(symbol: str) -> str:
     original = symbol
     for s, h in greek_symbols.items():
         if symbol == s or symbol.startswith(s + '_'):
@@ -172,7 +171,7 @@ def symbol2html(symbol):
     return symbol
 
 
-def symbol2mathtext(symbol):
+def symbol2mathtext(symbol: str) -> str:
     original = symbol
     parts = symbol.split('_', 1)
     if parts[0] in dot_symbols:
@@ -189,17 +188,17 @@ def symbol2mathtext(symbol):
     return symbol
 
 
-class ModelDict(object):
+class ModelDict(collections.abc.Mapping):
     """Evaluates a expression combining model parameters and implied properties (to be temperature corrected)
     and optionally an additonals "locals" dictionary with additional objects - e.g., model results. The latter
     takes priority if provided. Its contained varables are assumed to *already have been temperature-corrected*."""
 
-    def __init__(self, model, c_T=1., locals={}):
+    def __init__(self, model: 'Model', c_T: float=1., locals: Mapping[str, Any]={}):
         self.model = model
         self.c_T = c_T
         self.locals = locals
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: str):
         if key in self.locals:
             return self.locals[key]
         if key in compound_variables:
@@ -209,12 +208,15 @@ class ModelDict(object):
         assert key in temperature_correction, 'No temperature correction available for %s' % key
         return getattr(self.model, key) * self.c_T**temperature_correction[key]
 
-    def __contains__(self, key):
-        return key in self.locals or hasattr(self.model, key) or key in compound_variables
+    def __len__(self) -> int:
+        return len(frozenset(list(self.locals.keys()) + list(compound_variables.keys()) + dir(self.model)))
+
+    def __iter__(self):
+        return frozenset(list(self.locals.keys()) + list(compound_variables.keys()) + dir(self.model)).__iter__()
 
 
 class Model(object):
-    def __init__(self, type='abj'):
+    def __init__(self, type: str='abj'):
         self.p_Am = None   # {p_Am}, spec assimilation flux (J/d.cm^2)
         self.v = None      # energy conductance (cm/d)
         self.p_M = None    # [p_M], vol-spec somatic maint, J/d.cm^3
@@ -318,7 +320,7 @@ class Model(object):
                 setattr(clone, p, parameters.get(p, getattr(self, p)))
         return clone
 
-    def initialize(self, E_0_ini=0., verbose=False, precision=0.001):
+    def initialize(self, E_0_ini: Optional[float]=0., verbose: bool=False, precision: float=0.001):
         assert self.p_T >= 0.
         assert self.p_M >= 0.
         assert self.p_Am >= 0.
@@ -435,7 +437,7 @@ class Model(object):
         # Set time step for integration to metamorphosis and puberty
         delta_t = max(precision * 10, self.a_b * precision * 10) * 2
 
-        self.r_B = self.p_M/3/(E_m*kap + E_G)  # checked against p52, note f=1
+        self.r_B = self.p_M / 3 / (E_m * kap + E_G)  # checked against p52, note f=1
         L_i_min = self.L_m - self.L_T  # not counting acceleration!
         if L_i_min < self.L_b:
             # shrinking directly after birth
@@ -485,13 +487,13 @@ class Model(object):
                 print('Cannot determine age and length at puberty.')
             return
         self.valid = True
-        self.maturity_states = {
+        self.maturity_states: Dict[float, Tuple[float, float]] = {
             self.E_Hb: (self.a_b, self.L_b),
             self.E_Hj: (self.a_j, self.L_j),
             self.E_Hp: (self.a_p, self.L_p)
         }
 
-    def age_at_maturity(self, E_H, precision=0.001, c_T=1.):
+    def age_at_maturity(self, E_H: float, precision: float=0.001, c_T: float=1.) -> float:
         """Get age (time since start of development) at specific maturity value."""
         if E_H not in self.maturity_states:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
@@ -512,19 +514,19 @@ class Model(object):
         a, L = self.maturity_states[E_H]
         return a / c_T
 
-    def evaluate(self, expression, c_T=1., locals={}):
+    def evaluate(self, expression: str, c_T: float=1., locals: Mapping[str, Any]={}):
         """Compute expression that can contain any DEB parameter, trait, as well as additional variables provided with the "locals" argument.
-        If a temeporaure correction factor (c_T) other than 1 is specified, the result will be temperature-corrected accordingly.
+        If a temperature correction factor (c_T) other than 1 is specified, the result will be temperature-corrected accordingly.
         But note that the values in locals are then assumed to already have been temperature corrected!"""
         return eval(expression, {}, ModelDict(self, c_T, locals=locals))
 
-    def get_temperature_correction(self, T):
+    def get_temperature_correction(self, T: float) -> float:
         """Compute temperature correction factor c_T from specified body temperature (degrees Celsius).
         This is based on the Arrhenius relationship."""
         assert T < 200., 'Temperature must be given in degrees Celsius'
-        return numpy.exp(self.T_A/293.15 - self.T_A/(273.15 + T))
+        return numpy.exp(self.T_A / 293.15 - self.T_A / (273.15 + T))
 
-    def writeFABMConfiguration(self, path, name='deb', model='deb/population'):
+    def writeFABMConfiguration(self, path: str, name: str='deb', model: str='deb/population'):
         if not self.initialized:
             self.initialize()
         with open(path, 'w') as f:
@@ -550,7 +552,7 @@ class Model(object):
             f.write('      L_j: %s\n' % self.L_j)
             f.write('      E_0: %s\n' % self.E_0)
 
-    def describe(self, c_T=1.):
+    def describe(self, c_T: float=1.):
         """Report implied properties/traits."""
         if not self.initialized:
             self.initialize()
@@ -567,7 +569,7 @@ class Model(object):
             print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
     @property
-    def a_m(self):
+    def a_m(self) -> float:
         """Get the expected life span in d (for reference temperature of 20 degrees Celsius)"""
         if self.a_m_ is None:
             self.a_m_ = self.state_at_survival(S=0.0001)['a']
@@ -576,7 +578,7 @@ class Model(object):
     a_S01 = property(lambda self: self.state_at_survival(0.01)['t'])
     a_S10 = property(lambda self: self.state_at_survival(0.10)['t'])
 
-    def state_at_survival(self, S, c_T=1., f=1., delta_t=None, t_max=365*100, precision=0.001):
+    def state_at_survival(self, S: float, c_T: float=1., f: float=1., delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001) -> Optional[Mapping[str, float]]:
         """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
         if not self.initialized:
             self.initialize()
@@ -601,7 +603,7 @@ class Model(object):
             'R': result[0, 10]
         }
 
-    def simulate(self, n, delta_t, nsave=1, c_T=1., f=1.):
+    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1.) -> Optional[Mapping[str, numpy.ndarray]]:
         if not self.initialized:
             self.initialize()
         if not self.valid:
@@ -623,7 +625,7 @@ class Model(object):
             'R': result[:, 10]
         }
 
-    def plot_result(self, t, L, S, R, E_H, c_T=1., **kwargs):
+    def plot_result(self, t: numpy.ndarray, L: numpy.ndarray, S: numpy.ndarray, R: numpy.ndarray, E_H: numpy.ndarray, c_T: float=1., **kwargs):
         from matplotlib import pyplot
         fig = kwargs.get('fig', None)
         if fig is None:

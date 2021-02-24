@@ -1,6 +1,7 @@
 from __future__ import print_function
 import threading
 import timeit
+from typing import Iterable, Sequence, Optional
 
 import numpy
 
@@ -9,7 +10,7 @@ from .. import model as pydeb
 
 class Sampler(object):
     name = 'MC'
-    def __init__(self, parameter_names, mean, cov, inverse_transforms, E_0_ini=None, deb_type='abj'):
+    def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, E_0_ini: Optional[float]=None, deb_type: str='abj'):
         self.parameter_names = parameter_names
         self.mean = mean
         self.cov = cov
@@ -18,14 +19,14 @@ class Sampler(object):
         self.deb_type = deb_type
         self.status = 'initializing'
 
-    def create_model(self, x):
+    def create_model(self, x: Iterable[float]):
         debmodel = pydeb.Model(type=self.deb_type)
         for name, value in zip(self.parameter_names, x):
             setattr(debmodel, name, value)
         debmodel.initialize(self.E_0_ini)
         return debmodel
 
-    def sample(self, n):
+    def sample(self, n: int):
         samples = numpy.empty((1000, self.mean.size))
         istep = samples.shape[0]
         count = 0
@@ -43,12 +44,12 @@ class Sampler(object):
 
 class MCMCSampler(Sampler):
     name = 'MCMC'
-    def __init__(self, parameter_names, mean, cov, inverse_transforms, E_0_ini=None, deb_type='abj'):
+    def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, E_0_ini: Optional[float]=None, deb_type: str='abj'):
         Sampler.__init__(self, parameter_names, mean, cov, inverse_transforms, E_0_ini, deb_type)
         self.likelihood = likelihood.LnLikelihood(deb_type=deb_type, E_0_ini=E_0_ini)
         self.likelihood.add_component(likelihood.Parameters(parameter_names, mean, cov, inverse_transforms))
 
-    def sample(self, n, nburn=None):
+    def sample(self, n: int, nburn: Optional[int]=None):
         # Adaptive metropolis based on Haario et al. (2001)
         names, mean, cov = self.likelihood.get_prior()
 
@@ -113,7 +114,7 @@ class MCMCSampler(Sampler):
 class EnsembleRunner(threading.Thread):
     selected_properties = ('E_0', 'a_b', 'a_p', 'a_99', 'L_b', 'L_p', 'L_i', 'R_i', 'r_B', 'E_m', 's_M')
     selected_outputs = ('L', 'R', 'S', 'L_w')
-    def __init__(self, features, inverse_transforms, mean, cov, sample_size=10000, deb_type='abj', temperature=20, priors=(), t_end=None):
+    def __init__(self, features: Sequence[str], inverse_transforms, mean, cov, sample_size: int=10000, deb_type: str='abj', temperature: float=20, priors=(), t_end: float=None):
         threading.Thread.__init__(self)
         self.sample_size = sample_size
         self.progress = 0.
@@ -201,7 +202,7 @@ class EnsembleRunner(threading.Thread):
         for key in self.selected_outputs:
             self.results[key] = numpy.empty((n, len(self.t)), dtype='f4')
 
-        def getResult(model):
+        def getResult(model: pydeb.Model):
             if not hasattr(model, 'outputs'):
                 delta_t = max(0.04, model.a_b / model.c_T / 5)
                 nt = int(t_end / delta_t)
@@ -238,14 +239,14 @@ class EnsembleRunner(threading.Thread):
         self.update_progress(1., 'done')
         print('Time taken for statistics: %s' % (timeit.default_timer() - sim_end_time))
 
-    def update_progress(self, value, status):
+    def update_progress(self, value: float, status: str):
         self.progress = value
         self.status = status
         if self._bar is not None:
             self._bar.value = value
             self._out.value = status
 
-    def get_statistics(self, select=None, percentiles = (2.5, 25, 50, 75, 97.5)):
+    def get_statistics(self, select: Optional[Iterable[str]]=None, percentiles: Iterable[float]=(2.5, 25, 50, 75, 97.5)):
         if self.result is not None:
             return self.result
 
@@ -271,7 +272,7 @@ class EnsembleRunner(threading.Thread):
                 result[key] = [percs[i, :] for i in range(percs.shape[0])]
         return result
 
-    def get_result(self, select=None):
+    def get_result(self, select: Optional[Iterable[str]]=None):
         result = {'status': self.status or self.sampler.status, 'progress': self.progress}
         result.update(self.get_statistics(select))
         return result
