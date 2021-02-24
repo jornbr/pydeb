@@ -192,14 +192,13 @@ class AmP(object):
             yield m
 
     def compare(self, debug: bool=False, precision: float=0.001):
-        temperature_corrections = {'a_b': 1, 'a_p': 1, 'a_99': 1, 'r_B': -1, 'R_i': -1}
         property_names, results = set(), []
         for taxon_name, taxon_id, m, amp_properties in zip(self.names, self.ids, self.get_models(debug, precision), self.properties):
             comparison = {}
             for name, amp_value in amp_properties.items():
                 value = getattr(m, name, None)
                 if value is not None:
-                    amp_value *= amp_properties['c_T']**temperature_corrections.get(name, 0)
+                    amp_value *= amp_properties['c_T']**(-pydeb.temperature_correction.get(name, 0))
                     property_names.add(name)
                     comparison[name] = (amp_value, value, None if amp_value == 0 else (value/amp_value - 1))
             results.append((taxon_name, taxon_id, m.type, comparison))
