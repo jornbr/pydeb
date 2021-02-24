@@ -16,7 +16,7 @@ class CoLResult(dict):
 
 def get_entries(name: str, exact: bool=False):
     name = name.lower()
-    f = urllib.request.urlopen('http://webservice.catalogueoflife.org/%s/webservice?name=%s&response=full&format=json' % (col_version, urllib.parse.quote_plus(name)))
+    f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?name=%s&response=full&format=json' % (col_version, urllib.parse.quote_plus(name)))
     data = json.load(f)
     results = []
     for entry in data.get('results', []):
@@ -92,7 +92,7 @@ def get_model_by_name(name: str):
     return get_model(entries[0])
 
 def get_model_by_id(col_id: str):
-    f = urllib.request.urlopen('http://webservice.catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
+    f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
     data = json.load(f)
     return get_model(data['results'][0])
 
