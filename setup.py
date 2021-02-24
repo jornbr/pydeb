@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 
-from setuptools import setup, find_packages
-from Cython.Build import cythonize
+from setuptools import setup, find_packages, Extension
 import numpy
 
 setup(name='pydeb',
@@ -15,6 +14,10 @@ setup(name='pydeb',
       license='GPL',
       packages=find_packages(),
       package_data={'pydeb.infer': ['data/*']},
+      ext_modules = [
+          Extension('pydeb.engine.cmodel', ['pydeb/engine/cmodel.pyx', 'pydeb/engine/optimize.pxd']),
+          Extension('pydeb.engine.optimize', ['pydeb/engine/optimize.pyx'])
+      ],
       include_dirs=[numpy.get_include()],
       install_requires=['numpy'],
       classifiers=[ # Note: classifiers MUST match options on https://pypi.org/classifiers/ for PyPI submission
