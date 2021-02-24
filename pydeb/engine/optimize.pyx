@@ -1,5 +1,6 @@
 # Brent's method based on scipy.optimize.optimize (minimize_scalar with method='Brent')
 
+# cython: language_level=3
 # cython: cdivision=True
 
 cimport cython

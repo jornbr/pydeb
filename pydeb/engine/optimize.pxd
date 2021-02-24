@@ -1,3 +1,5 @@
+# cython: language_level=3
+
 cdef class Function:
     cdef double evaluate(Function self, double x) nogil
 
