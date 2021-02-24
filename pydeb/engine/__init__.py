@@ -5,14 +5,14 @@ from typing import Mapping
 import numpy
 
 try:
-    import cmodel
-except ImportError:
+    from . import cmodel
+except ImportError as e1:
     try:
         import pyximport
         pyximport.install(setup_args={'include_dirs': numpy.get_include()}, language_level='3')
         from . import cmodel
-    except ImportError as e:
-        print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason: %s' % e)
+    except ImportError as e2:
+        print('WARNING: unable to load Cython verison of model code. Performance will be reduced. Reason:\n%s\n' % (e1, e2))
         cmodel = None
 
 class PyEngine(object):
