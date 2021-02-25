@@ -128,26 +128,25 @@ cdef class Model:
         cdef double E_m, L_m, inv_L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
         cdef double L2, L3, s, p_C, p_R, invdenom
         cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
-        cdef int i, isave, devel_state
-        cdef bint save
+        cdef int i, isave, devel_state, steps_till_save
 
         kap = self.kap
-        v = self.v * c_T
-        k_J = self.k_J * c_T
-        p_Am = self.p_Am * c_T
-        p_M = self.p_M * c_T
-        p_T = self.p_T * c_T
+        v = self.v * c_T * delta_t
+        k_J = self.k_J * c_T * delta_t
+        p_Am = self.p_Am * c_T * delta_t
+        p_M = self.p_M * c_T * delta_t
+        p_T = self.p_T * c_T * delta_t
         E_G = self.E_G
         E_Hb = self.E_Hb
         E_Hj = self.E_Hj
         E_Hp = self.E_Hp
         s_G = self.s_G
-        h_a = self.h_a * c_T * c_T
+        h_a = self.h_a * c_T * c_T * delta_t * delta_t
         inv_E_0 = 1. / self.E_0
         kap_R = self.kap_R
         s_M = self.s_M
         inv_L_b = 1. / self.L_b
-        inv_delta_t = 1. / (delta_t + 1e-8)
+        inv_delta_t = 1. - 1e-8
 
         E_m = p_Am / v
         inv_E_m = 1. / E_m
@@ -163,22 +162,24 @@ cdef class Model:
         dE_R = 0.
         with nogil:
             isave = 0
+            steps_till_save = n if nsave == 0 else 0
             E, L, E_H, E_R, Q, H, S, cumR, cumt = self.E_0, 0., 0., 0., 0., 0., 1., 0., 0.
             if devel_state == -1:
                 E = 0.
             for i in range(n + 1):
-                save = (S < S_crit or i == n) if nsave == 0 else i % nsave == 0
-                if save:
+                if nsave == 0 and S < S_crit:
+                    steps_till_save = 0
+                if steps_till_save == 0:
                     result[isave, 0] = i * delta_t
                     result[isave, 1] = E
                     result[isave, 2] = L
                     result[isave, 3] = E_H
-                    result[isave, 4] = E_R
-                    result[isave, 5] = Q
-                    result[isave, 6] = H
+                    result[isave, 4] = kap_R * E_R
+                    result[isave, 5] = Q / delta_t / delta_t
+                    result[isave, 6] = H / delta_t
                     result[isave, 7] = S
-                    result[isave, 8] = cumR
-                    result[isave, 9] = cumt
+                    result[isave, 8] = kap_R * cumR * inv_E_0
+                    result[isave, 9] = cumt * delta_t
 
                 L2 = L * L
                 L3 = L * L2
@@ -189,7 +190,7 @@ cdef class Model:
                     # developing foetus - explicit equations for L(t) and E(t)
                     # t = i * delta_t, but here were are computing the state for the next time step, i + 1
                     p_C = v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3
-                    L = onethird * v * (i + 1) * delta_t
+                    L = onethird * v * (i + 1)
                     E = L * L * L * E_m
                 else:
                     invdenom = 1. / (E + E_G_per_kap * L3)
@@ -200,23 +201,25 @@ cdef class Model:
                         # no longer an embryo/foetus - feeding/assimilation is active
                         dE += p_Am * L2 * f * s
                     dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) * onethird * invdenom
-                    E += delta_t * dE
-                    L += delta_t * dL
+                    E += dE
+                    L += dL
 
                 # Change in maturity (J) and reproduction buffer (J)
                 p_R = one_minus_kap * p_C - k_J * E_H   # J/d
                 if devel_state < 3:
                     # maturation: update maturity and development state
-                    E_H += delta_t * p_R
-                    if (E_H > E_Hp):
+                    E_H += p_R
+                    if (E_H >= E_Hp):
+                        p_R = E_H - E_Hp
+                        E_H = E_Hp
                         devel_state = 3   # adult
                     elif (E_H > E_Hb):
                         devel_state = 2   # juvenile (post birth)
-                else:
+                if devel_state == 3:
                     # reproduction (cumulative allocation in J/d and average total offspring over lifetime in #)
-                    dE_R = kap_R * p_R
-                    E_R += delta_t * dE_R
-                    cumR += delta_t * S * dE_R * inv_E_0
+                    dE_R = p_R
+                    E_R += dE_R
+                    cumR += S * dE_R
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
                 dQ = max((Q * inv_L_m3 * s_G + h_a) * max(0., p_C) * inv_E_m, -Q * inv_delta_t)
@@ -224,17 +227,20 @@ cdef class Model:
                 dS = 0. if L3 <= 0. or S < 0 else -min(inv_delta_t, H / L3) * S
 
                 # Update state variables related to survival
-                Q += delta_t * dQ     # damage inducing compounds (1/d2)
-                H += delta_t * dH     # hazard rate (1/d) multiplied by structural volume
-                S += delta_t * dS     # survival (-)
-                cumt += delta_t * S   # average life span (d)
+                Q += dQ     # damage inducing compounds (1/d2)
+                H += dH     # hazard rate (1/d) multiplied by structural volume
+                S += dS     # survival (-)
+                cumt += S   # average life span (d)
 
                 # Save diagnostics
-                if save:
-                    result[isave, 10] = dE_R * inv_E_0
+                if steps_till_save == 0:
+                    result[isave, 10] = kap_R * dE_R * inv_E_0 / delta_t
                     if nsave == 0:
                         break
                     isave += 1
+                    steps_till_save = nsave
+
+                steps_till_save -= 1
 
     @cython.cdivision(True)
     cpdef (double, double) find_maturity(Model self, double L_ini, double E_H_ini, double E_H_target, double delta_t=1., double s_M=1., double t_max=365000., double t_ini=0.):
