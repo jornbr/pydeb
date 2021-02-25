@@ -35,11 +35,6 @@ def get_ids(name: str, exact: bool=False):
         results[entry['id']] = (entry['name_html'], entry['url'])
     return results
 
-def get_typical_temperature(col_id: str):
-    f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, col_id))
-    result = json.load(f)
-    return result['typical_temperature']
-
 class ParameterEstimates(object):
     def __init__(self, col_id: str):
         # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
@@ -58,6 +53,7 @@ class ParameterEstimates(object):
             self.units.append(units)
             self.transforms.append(transform)
             self.mean.append(float(value))
+        self.mean = numpy.array(self.mean)
         self._cov = None
 
     @property
@@ -79,36 +75,58 @@ class ParameterEstimates(object):
                 self._cov[i, :] = values
         return self._cov
 
-def get_median(col_id: str):
-    estimates = ParameterEstimates(col_id)
-    return dict([(name, it(value)) for name, value, it in zip(estimates.names, estimates.mean, estimates.inverse_transforms)])
+class Taxon:
+    @staticmethod
+    def from_name(name: str) -> 'Taxon':
+        entries = get_entries(name, exact=True)
+        if len(entries) == 0:
+            raise Exception('No entries in found in Catalogue of Life with exact name "%s"' % name)
+        elif len(entries) > 1:
+            raise Exception('Multiple entries (%i) found in Catalogue of Life with exact name "%s"' % (len(entries), name))
+        return Taxon(entries[0])
 
-def get_model_by_name(name: str):
-    entries = get_entries(name, exact=True)
-    if len(entries) == 0:
-        raise Exception('No entries in found in Catalogue of Life with exact name "%s"' % name)
-    elif len(entries) > 1:
-        raise Exception('Multiple entries (%i) found in Catalogue of Life with exact name "%s"' % (len(entries), name))
-    return get_model(entries[0])
+    @staticmethod
+    def from_col_id(col_id: str) -> 'Taxon':
+        f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
+        data = json.load(f)
+        return Taxon(data['results'][0])
 
-def get_model_by_id(col_id: str):
-    f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
-    data = json.load(f)
-    return get_model(data['results'][0])
+    def __init__(self, entry):
+        self.col_id = entry['id']
+        self.name = entry['name']
+        self.rank = entry['rank']
+        self.classification = entry['classification'] + [entry]
 
-def get_model(entry):
-    classification = entry['classification'] + [entry]
-    foetus = len(classification) >= 3 and classification[2]['id'] == '7a4d4854a73e6a4048d013af6416c253'
-    if foetus and len(classification) >= 4:
-        # Filter out egg-laying mammals (Monotremata)
-        foetus = classification[3]['id'] != '7ba80933a5c268f595f28d7ef689acac'
-    m = model.Model(type='stx' if foetus else 'abj')
-    m.col_id = entry['id']
-    parameters = get_median(entry['id'])
-    for name, value in parameters.items():
-        setattr(m, name, value)
-    m.initialize()
-    if not m.valid:
-        raise Exception('Median parameter set is not valid.')
-    print('Constructed model for %s %s (typified model %s)' % (entry['rank'].lower(), entry['name'], m.type))
-    return m
+    @property
+    def typified_model(self):
+        foetus = len(self.classification) >= 3 and self.classification[2]['id'] == '7a4d4854a73e6a4048d013af6416c253'
+        if foetus and len(self.classification) >= 4:
+            # Filter out egg-laying mammals (Monotremata)
+            foetus = self.classification[3]['id'] != '7ba80933a5c268f595f28d7ef689acac'
+        return 'stx' if foetus else 'abj'
+
+    @property
+    def typical_temperature(self):
+        f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, self.col_id))
+        result = json.load(f)
+        return result['typical_temperature']
+
+    @property
+    def parameter_estimates(self):
+        return ParameterEstimates(self.col_id)
+
+    @property
+    def median_parameters(self):
+        estimates = self.parameter_estimates
+        return dict([(name, it(value)) for name, value, it in zip(estimates.names, estimates.mean, estimates.inverse_transforms)])
+
+    def get_model(self):
+        m = model.Model(type=self.typified_model)
+        m.col_id = self.col_id
+        for name, value in self.median_parameters.items():
+            setattr(m, name, value)
+        m.initialize()
+        if not m.valid:
+            raise Exception('Median parameter set is not valid.')
+        print('Constructed model for %s %s (typified model %s)' % (self.rank.lower(), self.name, m.type))
+        return m

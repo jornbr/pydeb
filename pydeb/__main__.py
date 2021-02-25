@@ -8,9 +8,10 @@ def main():
     parser.add_argument('-s', '--simulate', action='store_true', help='Simulate growth, reproduction and survival and plot results')
     parser.add_argument('-t', '--time', type=float, default=None, help='Time period to simulate')
     args = parser.parse_args()
-    model = infer.get_model_by_name(args.taxon)
+    taxon = infer.Taxon.from_name(args.taxon)
+    model = taxon.get_model()
     if args.c_T is None:
-        T = infer.get_typical_temperature(model.col_id)
+        T = taxon.typical_temperature
         args.c_T = model.get_temperature_correction(T)
         print('Body temperature: %.2f degrees Celsius' % (T,))
     model.describe(c_T=args.c_T)

@@ -19,7 +19,7 @@ class Sampler(object):
         self.deb_type = deb_type
         self.status = 'initializing'
 
-    def create_model(self, x: Iterable[float]):
+    def create_model(self, x: Iterable[float]) -> pydeb.Model:
         debmodel = pydeb.Model(type=self.deb_type)
         for name, value in zip(self.parameter_names, x):
             setattr(debmodel, name, value)
@@ -114,7 +114,7 @@ class MCMCSampler(Sampler):
 class EnsembleRunner(threading.Thread):
     selected_properties = ('E_0', 'a_b', 'a_p', 'a_99', 'L_b', 'L_p', 'L_i', 'R_i', 'r_B', 'E_m', 's_M')
     selected_outputs = ('L', 'R', 'S', 'L_w')
-    def __init__(self, features: Sequence[str], inverse_transforms, mean, cov, sample_size: int=10000, deb_type: str='abj', temperature: float=20, priors=(), t_end: float=None):
+    def __init__(self, features: Sequence[str], inverse_transforms, mean, cov, sample_size: int=10000, deb_type: str='abj', temperature: float=20, priors=(), t_end: float=None, selected_properties: Iterable[str]=(), selected_outputs: Iterable[str]=()):
         threading.Thread.__init__(self)
         self.sample_size = sample_size
         self.progress = 0.
@@ -145,6 +145,11 @@ class EnsembleRunner(threading.Thread):
         self.ensemble = None
         self.nmodels = 0
         self.nresults = 0
+        self.properties_for_output = set(selected_properties)
+        if isinstance(self.sampler, MCMCSampler):
+            self.properties_for_output.update(pydeb.primary_parameters)
+            self.properties_for_output.update(self.sampler.parameter_names)
+        self.selected_outputs = selected_outputs
         self._out = None
         self._bar = None
         self.start()
@@ -152,11 +157,7 @@ class EnsembleRunner(threading.Thread):
     def run(self):
         start_time = timeit.default_timer()
 
-        properties_for_output = set(self.selected_properties)
-        if isinstance(self.sampler, MCMCSampler):
-            properties_for_output.update(pydeb.primary_parameters)
-            properties_for_output.update(self.sampler.parameter_names)
-        self.properties = dict([(k, numpy.empty((self.sample_size,))) for k in properties_for_output])
+        self.properties = dict([(k, numpy.empty((self.sample_size,))) for k in self.properties_for_output])
         ensemble = numpy.empty((self.sample_size, len(self.sampler.parameter_names)))
 
         def sample():
