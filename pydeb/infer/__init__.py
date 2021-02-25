@@ -1,3 +1,4 @@
+from typing import Optional, Union
 import urllib.request
 import urllib.parse
 import json
@@ -9,6 +10,11 @@ from . import database
 
 col_version = 'annual-checklist/2019' # 'col' for latest
 debber_url = 'https://deb.bolding-bruggeman.com'
+
+rank2depth = {'root': -1, 'kingdom': 0, 'phylum': 1, 'class': 2, 'order': 3, 'superfamily': 3.5, 'family': 4, 'genus': 5, 'subgenus': 5.5, 'species': 6, 'infraspecies': 6.5}
+
+# Dummy Catalogue of Life record for the root of the tree of life
+root = {'id': 'root', 'name': 'root', 'rank': 'root', 'name_html': 'root'}
 
 class CoLResult(dict):
     def _repr_html_(self):
@@ -36,25 +42,42 @@ def get_ids(name: str, exact: bool=False):
     return results
 
 class ParameterEstimates(object):
-    def __init__(self, col_id: str):
+    def __init__(self, col_id: str, offline_db: Union[database.Database, str, None]=None):
         # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
         self.col_id = col_id
-        f = urllib.request.urlopen('%s?id=%s&download=mean' % (debber_url, col_id))
-        self.names, self.units, self.transforms, self.mean = [], [], [], []
-        for l in io.TextIOWrapper(f, encoding='utf-8'):
-            name, value = l.rstrip('\n').split('\t')
-            name, units = name[:-1].split(' (', 1)
-            parts = units.split(' ', 1)
-            transform = None
-            if parts[0] in ('logit', 'ln'):
-                transform = parts[0]
-                units = '-' if len(parts) == 1 else parts[1]
-            self.names.append(name)
-            self.units.append(units)
-            self.transforms.append(transform)
-            self.mean.append(float(value))
-        self.mean = numpy.array(self.mean)
-        self._cov = None
+        if offline_db is None:
+            f = urllib.request.urlopen('%s?id=%s&download=mean' % (debber_url, col_id))
+            self.names, self.units, self.transforms, self.mean = [], [], [], []
+            for l in io.TextIOWrapper(f, encoding='utf-8'):
+                name, value = l.rstrip('\n').split('\t')
+                name, units = name[:-1].split(' (', 1)
+                parts = units.split(' ', 1)
+                transform = None
+                if parts[0] in ('logit', 'ln'):
+                    transform = parts[0]
+                    units = '-' if len(parts) == 1 else parts[1]
+                self.names.append(name)
+                self.units.append(units)
+                self.transforms.append(transform)
+                self.mean.append(float(value))
+            self.mean = numpy.array(self.mean)
+            self._cov = None
+        else:
+            if isinstance(offline_db, str):
+                offline_db = database.Database(offline_db)
+
+            # Get information on the taxon, including taxonomic classification
+            taxon = Taxon.from_col_id(col_id)
+            classification = [root] + taxon.classification + [taxon]
+
+            # Get statistics of the taxon's primary parameters
+            for found_taxon in classification[::-1]:
+                if found_taxon.col_id in offline_db.id2stats:
+                    break
+            else:
+                raise Exception('No ancestor of %s found in result tree.' % col_id)
+            self.mean, self._cov = offline_db.id2stats[found_taxon.col_id]
+            self._cov = self._cov + offline_db.phylocov * max(0., rank2depth['species'] - rank2depth[found_taxon.rank.lower()]) + offline_db.phenocov
 
     @property
     def inverse_transforms(self):
@@ -75,6 +98,10 @@ class ParameterEstimates(object):
                 self._cov[i, :] = values
         return self._cov
 
+    @property
+    def median(self):
+        return dict([(name, it(value)) for name, value, it in zip(self.names, self.mean, self.inverse_transforms)])
+
 class Taxon:
     @staticmethod
     def from_name(name: str) -> 'Taxon':
@@ -89,7 +116,8 @@ class Taxon:
     def from_col_id(col_id: str) -> 'Taxon':
         f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
         data = json.load(f)
-        return Taxon(data['results'][0])
+        entry = data['results'][0]
+        return Taxon(entry.get('accepted_name', entry))
 
     def __init__(self, entry):
         self.col_id = entry['id']
@@ -98,7 +126,7 @@ class Taxon:
         self.classification = entry['classification'] + [entry]
 
     @property
-    def typified_model(self):
+    def typified_model(self) -> str:
         foetus = len(self.classification) >= 3 and self.classification[2]['id'] == '7a4d4854a73e6a4048d013af6416c253'
         if foetus and len(self.classification) >= 4:
             # Filter out egg-laying mammals (Monotremata)
@@ -106,24 +134,17 @@ class Taxon:
         return 'stx' if foetus else 'abj'
 
     @property
-    def typical_temperature(self):
+    def typical_temperature(self) -> float:
         f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, self.col_id))
         result = json.load(f)
         return result['typical_temperature']
 
-    @property
-    def parameter_estimates(self):
-        return ParameterEstimates(self.col_id)
+    def infer_parameters(self, offline_db: Union[database.Database, str, None]=None) -> ParameterEstimates:
+        return ParameterEstimates(self.col_id, offline_db)
 
-    @property
-    def median_parameters(self):
-        estimates = self.parameter_estimates
-        return dict([(name, it(value)) for name, value, it in zip(estimates.names, estimates.mean, estimates.inverse_transforms)])
-
-    def get_model(self):
+    def get_model(self) -> model.Model:
         m = model.Model(type=self.typified_model)
-        m.col_id = self.col_id
-        for name, value in self.median_parameters.items():
+        for name, value in self.infer_parameters().median.items():
             setattr(m, name, value)
         m.initialize()
         if not m.valid:

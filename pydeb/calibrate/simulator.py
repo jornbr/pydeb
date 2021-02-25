@@ -112,8 +112,6 @@ class MCMCSampler(Sampler):
         #print('Mean acceptance (excl. burn-in): %.3f' % acceptance[nburn:].mean())
 
 class EnsembleRunner(threading.Thread):
-    selected_properties = ('E_0', 'a_b', 'a_p', 'a_99', 'L_b', 'L_p', 'L_i', 'R_i', 'r_B', 'E_m', 's_M')
-    selected_outputs = ('L', 'R', 'S', 'L_w')
     def __init__(self, features: Sequence[str], inverse_transforms, mean, cov, sample_size: int=10000, deb_type: str='abj', temperature: float=20, priors=(), t_end: float=None, selected_properties: Iterable[str]=(), selected_outputs: Iterable[str]=()):
         threading.Thread.__init__(self)
         self.sample_size = sample_size
