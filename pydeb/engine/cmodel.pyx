@@ -103,10 +103,12 @@ cdef class Model:
             dL = (E * v - (p_M_per_kap * L + p_T_per_kap) * L3) * invdenom * onethird
             dE = -p_C
             dE_H = one_minus_kap * p_C - k_J * E_H
+            L_new = L + delta_t * dL
             if dL <= 0:
                 delta_t = (E - L**3 * E_m) / p_C
+                L_new = L + delta_t * dL
                 done = 1
-            elif E + delta_t * dE < E_m * (L + delta_t * dL)**3:
+            elif E + delta_t * dE < E_m * L_new * L_new * L_new:
                 p = p_C / (dL * E_m)
                 q = - (E + p_C * L / dL) / E_m
                 c1 = -q/2
@@ -116,7 +118,7 @@ cdef class Model:
                 done = 1
             t += delta_t
             E += delta_t * dE
-            L += delta_t * dL
+            L = L_new
             E_H += delta_t * dE_H
         return t, L, E_H
 
