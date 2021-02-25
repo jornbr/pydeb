@@ -43,6 +43,7 @@ long_names = {
     'a_j': 'age at metamorphosis',
     'a_p': 'age at puberty',
     'a_99': 'age when reaching 99% of ultimate structural length',
+    'a_m': 'expected life span',
     'R': 'reproduction rate',
     'R_i': 'ultimate reproduction rate',
     'r_B': 'von Bertalanffy growth rate',
@@ -51,6 +52,7 @@ long_names = {
     's_M': 'acceleration at metamorphosis',
     'del_M': 'shape coefficient (structural : physical length)',
     'S': 'survival',
+    'N_R': 'expected lifetime reproductive output',
 }
 
 units = {
@@ -84,6 +86,7 @@ units = {
     'a_j': 'd',
     'a_p': 'd',
     'a_99': 'd',
+    'a_m': 'd',
     'R': '1/d',
     'R_i': '1/d',
     'r_B': '1/d',
@@ -92,6 +95,7 @@ units = {
     's_M': '-',
     'del_M': '-',
     'S': '-',
+    'N_R': '#',
 }
 
 temperature_correction = {
@@ -133,7 +137,8 @@ temperature_correction = {
     'del_M': 0,
     'mu_E': 0,
     'w_E': 0,
-    'd_E': 0
+    'd_E': 0,
+    'N_R': 0,
 }
 
 typified_models = {'std': 'standard DEB model',
@@ -300,7 +305,7 @@ class Model(object):
         self.L_b = None
         self.a_b = None
         self.a_99 = None
-        self.a_m_ = None
+        self.end_state_ = None
         # L_m = kappa*v*E_m/p_M = kappa*p_Am/p_M [L_m is maximum length in absence of surface=-area-specific maintenance!]
         # z = L_m/L_m_ref with L_m_ref = 1 cm - equal to L_m
 
@@ -565,25 +570,25 @@ class Model(object):
         for name in primary_parameters:
             print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
         print('Implied traits:')
-        for name in ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i'):
+        for name in ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i', 'a_m', 'N_R'):
             print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
     @property
-    def a_m(self) -> float:
-        """Get the expected life span in d (for reference temperature of 20 degrees Celsius)"""
-        if self.a_m_ is None:
-            self.a_m_ = self.state_at_survival(S=0.0001)['a']
-        return self.a_m_
+    def end_state(self) -> Mapping[str, float]:
+        if self.end_state_ is None:
+            self.end_state_ = self.state_at_survival(S=0.0001)
+        return self.end_state_
 
+    a_m = property(lambda self: self.end_state['a'])
+    N_R = property(lambda self: self.end_state['cumR'])
     a_S01 = property(lambda self: self.state_at_survival(0.01)['t'])
     a_S10 = property(lambda self: self.state_at_survival(0.10)['t'])
 
-    def state_at_survival(self, S: float, c_T: float=1., f: float=1., delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001) -> Optional[Mapping[str, float]]:
+    def state_at_survival(self, S: float, c_T: float=1., f: float=1., delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001) -> Mapping[str, float]:
         """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
         if not self.initialized:
             self.initialize()
-        if not self.valid:
-            return
+        assert self.valid, 'Model parameterisation is not valid'
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
         assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
         if delta_t is None:
