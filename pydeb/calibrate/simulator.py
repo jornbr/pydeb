@@ -1,7 +1,8 @@
 from __future__ import print_function
 import threading
 import timeit
-from typing import Iterable, Sequence, Optional
+import collections
+from typing import Iterable, Mapping, Sequence, Optional, Any, Tuple, Union
 
 import numpy
 
@@ -126,7 +127,6 @@ class EnsembleRunner(threading.Thread):
         self.median_result = None
         E_0_ini = None
         if self.median_model.valid:
-            self.median_model.c_T = self.median_model.get_temperature_correction(self.temperature)
             E_0_ini = self.median_model.E_0
         else:
             print('WARNING: median model is invalid')
@@ -143,10 +143,8 @@ class EnsembleRunner(threading.Thread):
         self.ensemble = None
         self.nmodels = 0
         self.nresults = 0
-        self.properties_for_output = set(selected_properties)
-        if isinstance(self.sampler, MCMCSampler):
-            self.properties_for_output.update(pydeb.primary_parameters)
-            self.properties_for_output.update(self.sampler.parameter_names)
+        properties_for_output = list(selected_properties) + list(pydeb.primary_parameters) + list(self.sampler.parameter_names)
+        self.properties_for_output = tuple(collections.OrderedDict.fromkeys(properties_for_output))
         self.selected_outputs = selected_outputs
         self._out = None
         self._bar = None
@@ -155,8 +153,9 @@ class EnsembleRunner(threading.Thread):
     def run(self):
         start_time = timeit.default_timer()
 
-        self.properties = dict([(k, numpy.empty((self.sample_size,))) for k in self.properties_for_output])
-        ensemble = numpy.empty((self.sample_size, len(self.sampler.parameter_names)))
+        ensemble = numpy.empty((self.sample_size, len(self.properties_for_output)))
+        self.properties = dict([(k, ensemble[:, i]) for i, k in enumerate(self.properties_for_output)])
+        self.c_Ts = numpy.empty((self.sample_size,))
 
         def sample():
             self.nmodels = 0
@@ -166,14 +165,8 @@ class EnsembleRunner(threading.Thread):
                     return
                 assert model.valid, 'Sampler returned an invalid model.'
                 debmodels.append(model)
-                model.c_T = model.get_temperature_correction(self.temperature)
-                for k, values in self.properties.items():
-                    value = getattr(model, k)
-                    if k not in pydeb.primary_parameters:
-                        value = value * model.c_T**pydeb.temperature_correction[k]
-                    values[i] = value
-                for ipar, k in enumerate(self.sampler.parameter_names):
-                    ensemble[i, ipar] = getattr(model, k)
+                self.c_Ts[i] = model.get_temperature_correction(self.temperature)
+                ensemble[i, :] = [getattr(model, k) for k in self.properties_for_output]
                 if i % 100 == 0:
                     self.update_progress((0.5 * i) / self.sample_size, 'initializing model %i of %i' % (i, self.sample_size))
                     self.nmodels = i + 1
@@ -187,13 +180,13 @@ class EnsembleRunner(threading.Thread):
         init_end_time = timeit.default_timer()
         print('Time taken for model initialization: %s' % (init_end_time - start_time))
 
-        self.ensemble = self.sampler.parameter_names, ensemble
+        self.ensemble = ensemble
 
         # Define time period for simulation based on entire ensemble
         t_end = self.t_end
         if t_end is None:
-            a_99_90 = numpy.percentile([model.a_99/model.c_T for model in debmodels], 90)
-            a_p_90 = numpy.percentile([model.a_p/model.c_T for model in debmodels], 90)
+            a_99_90 = numpy.percentile(numpy.array([model.a_99 for model in debmodels]) / self.c_Ts, 90)
+            a_p_90 = numpy.percentile(numpy.array([model.a_p for model in debmodels]) / self.c_Ts, 90)
             t_end = min(max(a_99_90, a_p_90), 365.*200)
         self.t = numpy.linspace(0, t_end, 1000)
 
@@ -201,15 +194,15 @@ class EnsembleRunner(threading.Thread):
         for key in self.selected_outputs:
             self.results[key] = numpy.empty((n, len(self.t)), dtype='f4')
 
-        def getResult(model: pydeb.Model):
+        def getResult(model: pydeb.Model, c_T: float):
             if not hasattr(model, 'outputs'):
-                delta_t = max(0.04, model.a_b / model.c_T / 5)
+                delta_t = max(0.04, model.a_b / c_T / 5)
                 nt = int(t_end / delta_t)
                 nsave = max(1, int(numpy.floor(nt / 1000)))
-                result = model.simulate(nt, delta_t, nsave, c_T=model.c_T)
+                result = model.simulate(nt, delta_t, nsave, c_T=c_T)
                 outputs = {}
                 for key in self.selected_outputs:
-                    values = model.evaluate(key, c_T=model.c_T, locals=result)
+                    values = model.evaluate(key, c_T=c_T, locals=result)
                     outputs[key] = numpy.interp(self.t, result['t'], values)
                 model.outputs = outputs
             return model.outputs
@@ -218,15 +211,14 @@ class EnsembleRunner(threading.Thread):
             median_pars = dict([(name, numpy.median(self.properties[name])) for name in self.sampler.parameter_names])
             self.median_model = self.median_model.copy(**median_pars)
             self.median_model.initialize()
-            self.median_model.c_T = self.median_model.get_temperature_correction(self.temperature)
 
         if self.median_model.valid:
-            self.median_result = getResult(self.median_model)
+            self.median_result = getResult(self.median_model, self.median_model.get_temperature_correction(self.temperature))
 
         for i, model in enumerate(debmodels):
             if i % 100 == 0:
                 self.update_progress(0.5 + (0.45 * i) / n, 'simulating with model %i of %i' % (i, n))
-            for key, values in getResult(model).items():
+            for key, values in getResult(model, self.c_Ts[i]).items():
                 self.results[key][i, :] = values
             if i % 100 == 0:
                 self.nresults = i + 1
@@ -251,7 +243,12 @@ class EnsembleRunner(threading.Thread):
 
         selected_outputs = self.selected_outputs if select is None else set(self.selected_outputs).intersection(select)
 
-        def getStatistics(x):
+        def getStatistics(k: str, x: numpy.ndarray, n: int) -> Mapping[str, Any]:
+            x = x[:n]
+            if k not in pydeb.primary_parameters:
+                # Correct for body temperature
+                x = x * self.c_Ts[:n]**pydeb.temperature_correction[k]
+
             bincounts, binbounds = numpy.histogram(x, bins=100)
             stats = dict([('perc%03i' % (10*p), v) for p, v in zip(percentiles, numpy.percentile(x, percentiles))])
             stats['histogram'] = [binbounds[0], binbounds[-1], bincounts]
@@ -260,10 +257,10 @@ class EnsembleRunner(threading.Thread):
         result = {}
         if self.median_result is not None:
             result['median'] = dict([(key, self.median_result[key]) for key in selected_outputs])
-        n = self.nmodels
+        n = int(self.nmodels)
         if n > 1:
-            result['properties'] = dict([(key, getStatistics(values[:n])) for key, values in self.properties.items()])
-        n = self.nresults
+            result['properties'] = dict([(key, getStatistics(key, values, n)) for key, values in self.properties.items()])
+        n = int(self.nresults)
         if n > 0 and selected_outputs:
             result['t'] = self.t
             for key in selected_outputs:
@@ -271,14 +268,24 @@ class EnsembleRunner(threading.Thread):
                 result[key] = [percs[i, :] for i in range(percs.shape[0])]
         return result
 
-    def get_result(self, select: Optional[Iterable[str]]=None):
+    def get_result(self, select: Optional[Iterable[str]]=None) -> Mapping[str, Any]:
         result = {'status': self.status or self.sampler.status, 'progress': self.progress}
         result.update(self.get_statistics(select))
         return result
 
+    def get_ensemble(self, names: Optional[Iterable[str]]=None, temperature_correct: Union[bool, Iterable[bool]]=False) -> Tuple[Iterable[str], numpy.ndarray]:
+        if names is None:
+            names = self.sampler.parameter_names
+        indices = [self.properties_for_output.index(name) for name in names]
+        result = self.ensemble[:, indices]
+        if numpy.any(temperature_correct):
+            temperature_correct = numpy.broadcast_to(temperature_correct, (result.shape[1],))
+            result *= self.c_Ts[:, numpy.newaxis]**numpy.where(temperature_correct, [pydeb.temperature_correction[name] for name in names], 0.)
+        return names, result
+
     def get_progress_bar(self):
         if self._bar is None:
             import ipywidgets
-            self._out = ipywidgets.Text()
-            self._bar = ipywidgets.FloatProgress(value=0.0, min=0.0, max=1.0)
+            self._out = ipywidgets.Text(value=self.status or self.sampler.status)
+            self._bar = ipywidgets.FloatProgress(value=self.progress, min=0.0, max=1.0)
         return ipywidgets.VBox([self._bar, self._out])
