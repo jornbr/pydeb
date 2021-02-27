@@ -2,7 +2,7 @@ from __future__ import print_function
 
 import io
 import os
-from typing import Optional
+from typing import Optional, List, Mapping
 
 import numpy
 
@@ -40,13 +40,14 @@ class Database(object):
             root = os.path.join(os.path.dirname(__file__), 'data')
         self.root = root
         self.version = version or root
-        self.AmP = None
+        self.AmP: Optional[AmP] = None
         print('Reading database from %s...' % self.root)
 
         print('  - metadata...', end='')
-        features, scale_factors = [], []
-        self.transforms = {}
-        self.distribution_units = {}
+        features: List[str] = []
+        scale_factors: List[float] = []
+        self.transforms: Mapping[str, Optional[str]] = {}
+        self.distribution_units: Mapping[str, str] = {}
         self.inverse_transforms = {}
         with io.open(os.path.join(self.root, 'features'), 'rU', encoding='utf-8') as f:
             for l in f:
@@ -97,7 +98,7 @@ class Database(object):
         print('done')
 
         print('  - typical temperatures...', end='')
-        self.typical_temperature = {}
+        self.typical_temperature: Mapping[str, float] = {}
         with io.open(os.path.join(self.root, 'mean_temp'), 'rU', encoding='utf-8') as f:
             f.readline()
             for l in f:
@@ -126,7 +127,7 @@ class Database(object):
             return
 
         print('  - shape coefficients (del_M)...', end='')
-        self.id2del_M = {}
+        self.id2del_M: Mapping[str, float] = {}
         with io.open(os.path.join(self.root, 'mean_del_M'), 'rU', encoding='utf-8') as fmean, io.open(os.path.join(self.root, 'cov_del_M'), 'rU', encoding='utf-8') as fvar:
             fmean.readline()
             fvar.readline()
