@@ -2,6 +2,7 @@ from __future__ import print_function
 import threading
 import timeit
 import collections
+import functools
 from typing import Iterable, Mapping, Sequence, Optional, Any, Tuple, Union
 
 import numpy
@@ -11,20 +12,19 @@ from .. import model as pydeb
 
 class Sampler(object):
     name = 'MC'
-    def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, E_0_ini: Optional[float]=None, deb_type: str='abj'):
+    def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, model_factory=None):
         self.parameter_names = parameter_names
         self.mean = mean
         self.cov = cov
         self.inverse_transforms = inverse_transforms
-        self.E_0_ini = E_0_ini
-        self.deb_type = deb_type
+        self.model_factory = model_factory
         self.status = 'initializing'
 
     def create_model(self, x: Iterable[float]) -> pydeb.Model:
-        debmodel = pydeb.Model(type=self.deb_type)
+        debmodel = self.model_factory()
         for name, value in zip(self.parameter_names, x):
             setattr(debmodel, name, value)
-        debmodel.initialize(self.E_0_ini)
+        debmodel.initialize()
         return debmodel
 
     def sample(self, n: int) -> Iterable[Optional[pydeb.Model]]:
@@ -45,9 +45,9 @@ class Sampler(object):
 
 class MCMCSampler(Sampler):
     name = 'MCMC'
-    def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, E_0_ini: Optional[float]=None, deb_type: str='abj'):
-        Sampler.__init__(self, parameter_names, mean, cov, inverse_transforms, E_0_ini, deb_type)
-        self.likelihood = likelihood.LnLikelihood(deb_type=deb_type, E_0_ini=E_0_ini)
+    def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, model_factory=None):
+        Sampler.__init__(self, parameter_names, mean, cov, inverse_transforms, model_factory)
+        self.likelihood = likelihood.LnLikelihood(model_factory=model_factory)
         self.likelihood.add_component(likelihood.Parameters(parameter_names, mean, cov, inverse_transforms))
 
     def sample(self, n: int, nburn: Optional[int]=None) -> Iterable[Optional[pydeb.Model]]:
@@ -125,18 +125,16 @@ class EnsembleRunner(threading.Thread):
             setattr(self.median_model, name, itf(value))
         self.median_model.initialize()
         self.median_result = None
-        E_0_ini = None
-        if self.median_model.valid:
-            E_0_ini = self.median_model.E_0
-        else:
+        if not self.median_model.valid:
             print('WARNING: median model is invalid')
+        model_factory = functools.partial(pydeb.Model, type=deb_type)
         if priors:
             self.sample_size *= 10
-            self.sampler = MCMCSampler(features, mean, cov, inverse_transforms, deb_type=deb_type, E_0_ini=E_0_ini)
+            self.sampler = MCMCSampler(features, mean, cov, inverse_transforms, model_factory=model_factory)
             for prior in priors:
                 self.sampler.likelihood.add_component(prior)
         else:
-            self.sampler = Sampler(features, mean, cov, inverse_transforms, deb_type=deb_type, E_0_ini=E_0_ini)
+            self.sampler = Sampler(features, mean, cov, inverse_transforms, model_factory=model_factory)
         self.t = None
         self.results = None
         self.result = None

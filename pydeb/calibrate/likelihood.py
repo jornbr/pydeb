@@ -138,9 +138,8 @@ class TimeSeries(Component):
         return lnl
 
 class LnLikelihood(object):
-    def __init__(self, deb_type: str='abj', E_0_ini: Optional[float]=None):
-        self.deb_type = deb_type
-        self.E_0_ini = E_0_ini
+    def __init__(self, model_factory):
+        self.model_factory = model_factory
         self.components: MutableMapping[str, Component] = collections.OrderedDict()
 
     def add_component(self, component: Component, name: Optional[str]=None):
@@ -169,7 +168,7 @@ class LnLikelihood(object):
 
     def calculate(self, name2value: Mapping[str, float]) -> Tuple[pydeb.Model, float]:
         # Create model object
-        model = pydeb.Model(type=self.deb_type)
+        model = self.model_factory()
 
         # Retrieve parameters specific to each likelihood component
         component_pars = [numpy.array([name2value[n] for n in component.global_names]) for component in self.components.values()]
@@ -180,7 +179,7 @@ class LnLikelihood(object):
             component.configure(model, current_name2value)
 
         # Initialize the model (determine whether the model is valid, calculate implied properties, etc.)
-        model.initialize(self.E_0_ini)
+        model.initialize()
 
         # Calculate ln likelihood by summing contribution of each component
         lnl = 0.

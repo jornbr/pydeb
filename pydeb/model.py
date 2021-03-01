@@ -325,7 +325,7 @@ class Model(object):
                 setattr(clone, p, parameters.get(p, getattr(self, p)))
         return clone
 
-    def initialize(self, E_0_ini: Optional[float]=0., verbose: bool=False, precision: float=0.001):
+    def initialize(self, verbose: bool=False, precision: float=0.001):
         assert self.p_T >= 0.
         assert self.p_M >= 0.
         assert self.p_Am >= 0.
