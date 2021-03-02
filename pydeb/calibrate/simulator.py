@@ -143,6 +143,7 @@ class EnsembleRunner(threading.Thread):
         self.nresults = 0
         properties_for_output = list(selected_properties) + list(pydeb.primary_parameters) + list(self.sampler.parameter_names)
         self.properties_for_output = tuple(collections.OrderedDict.fromkeys(properties_for_output))
+        self.selected_properties = self.properties_for_output if priors else selected_properties
         self.selected_outputs = selected_outputs
         self._out = None
         self._bar = None
@@ -241,8 +242,8 @@ class EnsembleRunner(threading.Thread):
 
         selected_outputs = self.selected_outputs if select is None else set(self.selected_outputs).intersection(select)
 
-        def getStatistics(k: str, x: numpy.ndarray, n: int) -> Mapping[str, Any]:
-            x = x[:n]
+        def getStatistics(k: str, n: int) -> Mapping[str, Any]:
+            x = self.properties[k][:n]
             if k not in pydeb.primary_parameters:
                 # Correct for body temperature
                 x = x * self.c_Ts[:n]**pydeb.temperature_correction[k]
@@ -257,7 +258,7 @@ class EnsembleRunner(threading.Thread):
             result['median'] = dict([(key, self.median_result[key]) for key in selected_outputs])
         n = int(self.nmodels)
         if n > 1:
-            result['properties'] = dict([(key, getStatistics(key, values, n)) for key, values in self.properties.items()])
+            result['properties'] = dict([(key, getStatistics(key, n)) for key in self.selected_properties])
         n = int(self.nresults)
         if n > 0 and selected_outputs:
             result['t'] = self.t
