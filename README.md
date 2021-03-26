@@ -17,7 +17,7 @@ If you have the prerequites described above, install pydeb with:
 Notes:
 * `python` is the name of the your Python interpreter.
 Replace it if necessary. For instance, some systems have Python 3
-installed as `python3`. If you want to install pydeb for this distribution, use `python3 -m pip install . --user`.
+installed as `python3`. If you want to install pydeb for this distribution, use `python3 -m pip install <PYDEB_DIR> --user`.
 * If you run the above from the pydeb top-level directory (the one that contains this README file), `<PYDEB_DIR>` would be `.`
 * The above installs in your [user-specific site packages directory](https://www.python.org/dev/peps/pep-0370/). To install system-wide, omit `--user`. But this may require administrator/sudo permissions.
 
