@@ -615,7 +615,7 @@ class Model(object):
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
         assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
 
-        result = numpy.empty((int(n / nsave) + 1, 11))
+        result = numpy.empty((n // nsave + 1, 11))
         self.engine.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
         return {
             't': result[:, 0],

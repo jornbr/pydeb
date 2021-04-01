@@ -17,7 +17,26 @@ except ImportError as e1:
 
 class PyEngine(object):
     def __init__(self):
-        pass
+        self.p_Am = -1.   # {p_Am}, spec assimilation flux (J/d.cm^2)
+        self.v = -1.      # energy conductance (cm/d)
+        self.p_M = -1.    # [p_M], vol-spec somatic maint, J/d.cm^3
+        self.p_T = 0.     # {p_T}, surf-spec somatic maint, J/d.cm^2
+        self.kap = -1.
+        self.E_G = -1.    # [E_G], spec cost for structure
+        self.E_Hb = -1.   # maturity at birth (J)
+        self.E_Hp = -1.   # maturity at puberty (J)
+        self.E_Hj = -1.   # maturity at metamorphosis (J)
+        self.k_J = -1.    # k_J: maturity maint rate coefficient, 1/d
+        self.h_a = 0.     # Weibull aging acceleration (1/d^2)
+        self.s_G = 0.     # Gompertz stress coefficient
+        self.kap_R = -1.  # reproductive efficiency
+        self.kap_X = -1.  # digestion efficiency of food to reserve
+        self.T_A = -1.    # Arrhenius temperature
+        self.type = type  # std, abj, stf, stx
+
+        self.E_0 = -1.
+        self.L_b = -1.
+        self.s_M = 1.
 
     def get_birth_state(self, E_0: float, delta_t: float=1.):
         t, E, L, E_H = 0., float(E_0), 0., 0.
@@ -95,7 +114,7 @@ class PyEngine(object):
         L = L_ini*exp(r/3*t)
         return t_ini + t, L
 
-    def integrate(self, n: int, delta_t: float, nsave: int, result, c_T: float, f: float, devel_state_ini: int) -> Mapping[str, numpy.ndarray]:
+    def integrate(self, n: int, delta_t: float, nsave: int, result: numpy.ndarray, c_T: float, f: float, devel_state_ini: int):
         kap = self.kap
         v = self.v*c_T
         k_J = self.k_J*c_T
@@ -112,65 +131,59 @@ class PyEngine(object):
         s_M = self.s_M
         L_b = self.L_b
 
-        E_m = p_Am/v
-        L_m = kap*p_Am/p_M
+        E_m = p_Am / v
+        L_m = kap * p_Am / p_M
         L_m3 = L_m**3
-        E_G_per_kap = E_G/kap
-        p_M_per_kap = p_M/kap
-        p_T_per_kap = p_T/kap
-        v_E_G_plus_P_T_per_kap = (v*E_G + p_T)/kap
-        one_minus_kap = 1-kap
 
         def dy(y, t0: float):
             E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
-            L2 = L*L
-            L3 = L*L2
-            s = max(1., min(s_M, L/L_b))
-            #s = 1.
+            L2 = L * L
+            L3 = L * L2
+            s = max(1., min(s_M, L / L_b))
 
             # Energy fluxes in J/d
-            p_C = E*(v_E_G_plus_P_T_per_kap*s*L2 + p_M_per_kap*L3)/(E + E_G_per_kap*L3)
-            p_A = 0. if E_H < E_Hb else p_Am*L2*f*s
-            p_R = one_minus_kap*p_C - k_J*E_H  # J/d
+            p_C = E * ((v * E_G + p_T) * s * L2 + p_M * L3) / (E_G * L3 + kap * E)
+            p_A = 0. if E_H < E_Hb else p_Am * L2 * f * s
+            p_R = (1. - kap) * p_C - k_J * E_H  # J/d
 
             # Change in reserve (J), structural length (cm), maturity (J), reproduction buffer (J)
             dE = p_A - p_C
-            dL = (E*v*s-(p_M_per_kap*L+p_T_per_kap*s)*L3)/3/(E+E_G_per_kap*L3)
+            dL = (kap * E * v * s - (p_M * L + p_T * s) * L3) / (E_G * L3 + kap * E) / 3.
             if E_H < E_Hp:
-                dE_H = p_R
-                dE_R = 0.
+                delta_E_H = p_R * delta_t
+                frac = 1. if E_H + delta_E_H <= E_Hp else (E_Hp - E_H) / delta_E_H
+                dE_H = frac * p_R
+                dE_R = kap_R * (1. - frac) * p_R
             else:
                 dE_H = 0
                 dE_R = kap_R * p_R
 
             # Damage-inducing compounds, damage, survival (0-1) - p 216
-            dQ = (Q/L_m3*s_G + h_a)*max(0., p_C)/E_m
+            dQ = (Q / L_m3 * s_G + h_a) * max(0., p_C) / E_m
             dH = Q
-            dS = 0. if L3 <= 0. or S < 1e-16 else -min(1./(delta_t+1e-8), H/L3)*S
+            dS = 0. if L3 <= 0. or S < 1e-16 else -min(1. / (delta_t + 1e-8), H / L3) * S
 
             # Cumulative reproduction (#) and life span (d)
-            dcumR = S*dE_R/E_0
+            dcumR = S * dE_R / E_0
             dcumt = S
 
-            return numpy.array((dE, dL, dE_H, dE_R, dQ, dH, dS, dcumR, dcumt), dtype=float), dE_R/E_0
+            return numpy.array((dE, dL, dE_H, dE_R, dQ, dH, dS, dcumR, dcumt), dtype=float), dE_R / E_0
 
-        y0 = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
-        result = numpy.empty((t.size, y0.size))
-        allR = numpy.empty((t.size,))
-        y = y0
-        for it in range(n+1):
+        assert result.shape == (n // nsave + 1, 11)
+        y = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
+        for it in range(n + 1):
+            t = it * delta_t
             if it % nsave == 0:
-                result[it/nsave, :] = y
-            derivative, R = dy(y, it*delta_t)
+                result[it // nsave, 0] = t
+                result[it // nsave, 1:-1] = y
+            derivative, R = dy(y, t)
             if not numpy.isfinite(derivative).all():
-                print('Temporal derivatives contain NaN: %s' % derivative)
-                sys.exit(1)
-            y += delta_t*derivative
+                raise Exception('Temporal derivatives at time %s contain NaN: %s' % (t, derivative))
+            y += delta_t * derivative
             if it % nsave == 0:
-                allR[it/nsave] = R
+                result[it // nsave, -1] = R
 
-        return {'t': t, 'E': result[:, 0], 'L': result[:, 1], 'E_H': result[:, 2], 'E_R': result[:, 3], 'S': result[:, 6], 'cumR': result[:, 7], 'a': result[:, 8], 'R': allR}
-
-def create():
-    if cmodel is not None:
+def create(use_cython=True):
+    if use_cython and cmodel is not None:
         return cmodel.Model()
+    return PyEngine()

@@ -126,8 +126,8 @@ cdef class Model:
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
     def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0.):
-        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, s_M, inv_L_b, inv_delta_t, inv_E_m
-        cdef double E_m, L_m, inv_L_m3, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
+        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, s_M, inv_L_b, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
+        cdef double E_m, L_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap
         cdef double L2, L3, s, p_C, p_R, invdenom
         cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
         cdef int i, isave, devel_state, steps_till_save
@@ -151,13 +151,13 @@ cdef class Model:
         inv_delta_t = 1. - 1e-8
 
         E_m = p_Am / v
-        inv_E_m = 1. / E_m
         L_m = kap * p_Am / p_M
-        inv_L_m3 = 1. / L_m**3
         E_G_per_kap = E_G / kap
         p_M_per_kap = p_M / kap
         p_T_per_kap = p_T / kap
         v_E_G_plus_P_T_per_kap = (v * E_G + p_T) / kap
+        s_G_per_L_m3_E_m = s_G / L_m**3 / E_m
+        h_a_per_E_m = h_a / E_m
         one_minus_kap = 1 - kap
         devel_state = devel_state_ini
 
@@ -224,7 +224,7 @@ cdef class Model:
                     cumR += S * dE_R
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
-                dQ = max((Q * inv_L_m3 * s_G + h_a) * max(0., p_C) * inv_E_m, -Q * inv_delta_t)
+                dQ = max((Q * s_G_per_L_m3_E_m + h_a_per_E_m) * max(0., p_C), -Q * inv_delta_t)
                 dH = Q
                 dS = 0. if L3 <= 0. or S < 0 else -min(inv_delta_t, H / L3) * S
 
