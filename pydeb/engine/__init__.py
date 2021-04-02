@@ -161,7 +161,7 @@ class PyEngine(object):
             # Damage-inducing compounds, damage, survival (0-1) - p 216
             dQ = (Q / L_m3 * s_G + h_a) * max(0., p_C) / E_m
             dH = Q
-            dS = 0. if L3 <= 0. or S < 1e-16 else -min(1. / (delta_t + 1e-8), H / L3) * S
+            dS = 0. if L3 <= 0. or S < 0. else -min(1. / (delta_t + 1e-8), H / L3) * S
 
             # Cumulative reproduction (#) and life span (d)
             dcumR = S * dE_R / E_0

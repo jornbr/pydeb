@@ -528,7 +528,7 @@ class Model(object):
     def get_temperature_correction(self, T: float) -> float:
         """Compute temperature correction factor c_T from specified body temperature (degrees Celsius).
         This is based on the Arrhenius relationship."""
-        assert T < 200., 'Temperature must be given in degrees Celsius'
+        assert numpy.all(T < 200.), 'Temperature must be given in degrees Celsius'
         return numpy.exp(self.T_A / 293.15 - self.T_A / (273.15 + T))
 
     def writeFABMConfiguration(self, path: str, name: str='deb', model: str='deb/population'):
