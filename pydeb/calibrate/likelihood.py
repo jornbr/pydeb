@@ -54,40 +54,45 @@ class ImpliedProperty(Component):
         return -0.5 * z * z
 
 class ExpressionAtSurvival(Component):
-    def __init__(self, S: float, expression: str, value: float, sd: float, transform: Callable[[float], float]=null_transform, temperature: float=20.):
-        self.expression = compile(expression, '<string>', 'eval')
-        self.value = value
-        self.sd = sd
-        self.transform = transform
-        self.temperature = temperature
+    def __init__(self, S: float, temperature: float=20., f: float=1.):
         self.S = S
+        self.temperature = temperature
+        self.f = f
+        self.expressions = []
+
+    def add_expression(self, expression: str, value: float, sd: float, transform: Callable[[float], float]=null_transform):
+        self.expressions.append((compile(expression, '<string>', 'eval'), value, sd, transform))
 
     def calculate_ln_likelihood(self, model: pydeb.Model, values) -> float:
         c_T = model.get_temperature_correction(self.temperature)
-        result = model.state_at_survival(self.S, c_T=c_T)
-        value_mod = model.evaluate(self.expression, c_T=c_T, locals=result)
-        z = (self.transform(value_mod) - self.value) / self.sd
+        result = model.state_at_survival(self.S, c_T=c_T, f=self.f)
+        lnl = 0.
+        for expression, value, sd, transform in self.expressions:
+            value_mod = model.evaluate(expression, c_T=c_T, locals=result)
+            z = (transform(value_mod) - value) / sd
+            lnl += -0.5 * z * z
         #print(self.transform(value_mod), self.value, self.sd, z, c_T)
-        return -0.5 * z * z
+        return lnl
 
 class TimeSeries(Component):
-    def __init__(self, t, temperature: float=20., offset_reference: Optional[str]=None, offset: float=0., offset_type: str='t'):
+    def __init__(self, t, temperature: float=20., f: float=1., offset_reference: Optional[str]=None, offset: float=0., offset_type: str='t'):
         self.t = numpy.array(t)
         self.offset = offset
         self.offset_reference = offset_reference
         assert offset_type in ('t', 'lnE_H')
         self.offset_type = offset_type
         self.temperature = temperature
+        self.f = f
         self.data = []
 
-    def add_series(self, expression: str, values, sd=None, transform=None):
+    def add_series(self, expression: str, values, sd=None, transform: Callable[[float], float]=null_transform):
         assert sd is not None or len(values) > 1, 'Cannot estimate standard deviation with only one observation.'
         assert sd is None or sd > 0, 'Standard deviation must be > 0, or None for it to be estimated (it is %s)' % sd
         expression = {'WM': 'L**3 + E * w_E / mu_E / d_E'}.get(expression, expression)
         expression = compile(expression, '<string>', 'eval')
-        if transform is None:
-            transform = lambda x: x
-        self.data.append((expression, numpy.array(values), None if sd is None else sd * sd, transform))
+        values = numpy.array(values)
+        assert values.shape == self.t.shape, '%s: shape of values %s does not match shape of times %s' % (expression, values, self.t)
+        self.data.append((expression, values, None if sd is None else sd * sd, transform))
 
     def get_prior(self):
         if not isinstance(self.offset, float):
@@ -112,7 +117,7 @@ class TimeSeries(Component):
         delta_t = (self.t[-1] + t_offset) / 1000
         nt = int((self.t[-1] + t_offset) / delta_t + 1)
         nsave = max(1, int(numpy.floor(nt / 1000)))
-        result = model.simulate(nt, delta_t, nsave, c_T=c_T)
+        result = model.simulate(nt, delta_t, nsave, c_T=c_T, f=self.f)
 
         # Extract requested expression
         t_mod = result['t'] - t_offset

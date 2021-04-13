@@ -82,6 +82,7 @@ class MCMCSampler(Sampler):
                 model_new, lnl_new = self.likelihood.calculate(params)
                 if model_new.valid:
                     model_new.params = params
+                    model_new.lnl = lnl_new
                     break
             else:
                 # We obtained 100 invalid DEB models in a row. This is not going to work. Report failure and return.
