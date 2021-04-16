@@ -25,6 +25,7 @@ def get_entries(name: str, exact: bool=False):
     f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?name=%s&response=full&format=json' % (col_version, urllib.parse.quote_plus(name)))
     data = json.load(f)
     results = []
+    found_ids = set()
     for entry in data.get('results', []):
         if exact and entry['name'].lower() != name:
             for cn in entry.get('common_names', []):
@@ -32,7 +33,12 @@ def get_entries(name: str, exact: bool=False):
                     break
             else:
                 continue
-        results.append(entry.get('accepted_name', entry))
+        entry = entry.get('accepted_name', entry)
+
+        # Avoid duplicates that may have come in by remapping to accepted_name
+        if entry['id'] not in found_ids:
+            results.append(entry)
+            found_ids.add(entry['id'])
     return results
 
 def get_ids(name: str, exact: bool=False):
@@ -42,7 +48,7 @@ def get_ids(name: str, exact: bool=False):
     return results
 
 class ParameterEstimates(object):
-    def __init__(self, col_id: str, offline_db: Union[database.Database, str, None]=None):
+    def __init__(self, col_id: str, offline_db: Union[database.Database, str, None]=None, add_del_M: bool=False, verbose: bool=False):
         # Retrieve inferences from Debber (returned as tab-separated UTF8 encoded text file)
         self.col_id = col_id
         if offline_db is None:
@@ -68,16 +74,40 @@ class ParameterEstimates(object):
 
             # Get information on the taxon, including taxonomic classification
             taxon = Taxon.from_col_id(col_id)
-            classification = [root] + taxon.classification + [taxon]
+            classification = [root] + taxon.classification
 
             # Get statistics of the taxon's primary parameters
             for found_taxon in classification[::-1]:
-                if found_taxon.col_id in offline_db.id2stats:
+                if found_taxon['id'] in offline_db.id2stats:
                     break
             else:
-                raise Exception('No ancestor of %s found in result tree.' % col_id)
-            self.mean, self._cov = offline_db.id2stats[found_taxon.col_id]
-            self._cov = self._cov + offline_db.phylocov * max(0., rank2depth['species'] - rank2depth[found_taxon.rank.lower()]) + offline_db.phenocov
+                raise Exception('No ancestor of %s found in result tree.' % (col_id))
+            if verbose:
+                print('Nearest ancestor found for %s (%s): %s (%s)' % (taxon.name, col_id, found_taxon['name'], found_taxon['id']))
+            self.mean, self._cov = offline_db.id2stats[found_taxon['id']]
+            self._cov = self._cov + offline_db.phylocov * max(0., rank2depth['species'] - rank2depth[found_taxon['rank'].lower()]) + offline_db.phenocov
+            self.names = list(offline_db.features)
+
+            if add_del_M:
+                for found_taxon in classification[::-1]:
+                    if found_taxon['id'] in offline_db.id2del_M:
+                        break
+                else:
+                    raise Exception('No ancestor of %s found in del_M result tree.' % col_id)
+                if verbose:
+                    print('Nearest del_M ancestor found for %s (%s): %s (%s)' % (taxon.name, col_id, found_taxon['name'], found_taxon['id']))
+                mean_del_M, var_del_M = offline_db.id2del_M[found_taxon['id']]
+                newmean = numpy.zeros((self.mean.shape[0] + 1,), dtype=self.mean.dtype)
+                newmean[:-1] = self.mean
+                newmean[-1] = mean_del_M
+                newcov = numpy.zeros((self._cov.shape[0] + 1, self._cov.shape[1] + 1), dtype=self._cov.dtype)
+                newcov[:-1, :-1] = self._cov
+                newcov[-1, -1] = var_del_M
+                self.mean, self._cov = newmean, newcov
+                self.names.append('del_M')
+
+            self.units = [model.units[name] for name in self.names]
+            self.transforms = [offline_db.transforms[name] for name in self.names]
 
     @property
     def inverse_transforms(self):
@@ -109,7 +139,7 @@ class Taxon:
         if len(entries) == 0:
             raise Exception('No entries in found in Catalogue of Life with exact name "%s"' % name)
         elif len(entries) > 1:
-            raise Exception('Multiple entries (%i) found in Catalogue of Life with exact name "%s"' % (len(entries), name))
+            raise Exception('Multiple entries (%i) found in Catalogue of Life with exact name "%s":\n%s' % (len(entries), name, '\n'.join(['%s: %s (%s)' % (entry['id'], entry['name'], entry['rank']) for entry in entries])))
         return Taxon(entries[0])
 
     @staticmethod
@@ -139,8 +169,8 @@ class Taxon:
         result = json.load(f)
         return result['typical_temperature']
 
-    def infer_parameters(self, offline_db: Union[database.Database, str, None]=None) -> ParameterEstimates:
-        return ParameterEstimates(self.col_id, offline_db)
+    def infer_parameters(self, offline_db: Union[database.Database, str, None]=None, add_del_M: bool=False, verbose: bool=False) -> ParameterEstimates:
+        return ParameterEstimates(self.col_id, offline_db, add_del_M, verbose=verbose)
 
     def get_model(self) -> model.Model:
         m = model.Model(type=self.typified_model)
