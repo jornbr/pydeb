@@ -127,7 +127,7 @@ class Database(object):
             return
 
         print('  - shape coefficients (del_M)...', end='')
-        self.id2del_M: Mapping[str, float] = {}
+        self.id2del_M: Mapping[str, Tuple[float, float]] = {}
         with io.open(os.path.join(self.root, 'mean_del_M'), 'rU', encoding='utf-8') as fmean, io.open(os.path.join(self.root, 'cov_del_M'), 'rU', encoding='utf-8') as fvar:
             fmean.readline()
             fvar.readline()
