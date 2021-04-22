@@ -47,12 +47,11 @@ class MCMCSampler(Sampler):
     name = 'MCMC'
     def __init__(self, parameter_names: Sequence[str], mean, cov, inverse_transforms, model_factory=None):
         Sampler.__init__(self, parameter_names, mean, cov, inverse_transforms, model_factory)
-        self.likelihood = likelihood.LnLikelihood(model_factory=model_factory)
-        self.likelihood.add_component(likelihood.Parameters(parameter_names, mean, cov, inverse_transforms))
+        self.likelihood = likelihood.Model(model_factory, parameter_names, mean, cov, inverse_transforms)
 
     def sample(self, n: int, nburn: Optional[int]=None) -> Iterable[Optional[pydeb.Model]]:
         # Adaptive metropolis based on Haario et al. (2001)
-        names, mean, cov = self.likelihood.get_prior()
+        names, mean, cov = self.likelihood.get_combined_prior()
 
         if nburn is None:
             nburn = int(0.1 * n)
@@ -62,8 +61,12 @@ class MCMCSampler(Sampler):
         steps = numpy.empty((100, zeros.size))
         lncrits = numpy.log(numpy.random.rand(n))
         acceptance = numpy.zeros((n,))
-        x = numpy.random.multivariate_normal(mean, cov)
-        model, lnl = self.likelihood.calculate(dict(zip(names, x)))
+        lnl = None
+        while lnl is None:
+            x = numpy.random.multivariate_normal(mean, cov)
+            params = dict(zip(names, x))
+            lnl = self.likelihood.calculate_combined_ln_likelihood(params)
+        model = params['model']
 
         x_mean = zeros
         samplecov = numpy.zeros_like(cov)
@@ -79,8 +82,9 @@ class MCMCSampler(Sampler):
                 x_new = x + steps[istep, :] * (scale if i < nburn else sqrt_s_d)
                 istep += 1
                 params = dict(zip(names, x_new))
-                model_new, lnl_new = self.likelihood.calculate(params)
-                if model_new.valid:
+                lnl_new = self.likelihood.calculate_combined_ln_likelihood(params)
+                if lnl_new is not None:
+                    model_new = params['model']
                     model_new.params = params
                     model_new.lnl = lnl_new
                     break
@@ -133,7 +137,7 @@ class EnsembleRunner(threading.Thread):
             self.sample_size *= 10
             self.sampler = MCMCSampler(features, mean, cov, inverse_transforms, model_factory=model_factory)
             for prior in priors:
-                self.sampler.likelihood.add_component(prior)
+                self.sampler.likelihood.add_child(prior)
         else:
             self.sampler = Sampler(features, mean, cov, inverse_transforms, model_factory=model_factory)
         self.t = None

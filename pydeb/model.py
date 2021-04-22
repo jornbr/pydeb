@@ -1,6 +1,7 @@
 import math
 from typing import Dict, Any, Mapping, Optional, Tuple
 import collections.abc
+import functools
 
 import numpy
 
@@ -139,6 +140,7 @@ temperature_correction = {
     'w_E': 0,
     'd_E': 0,
     'N_R': 0,
+    'age_at_maturity': None, # None means a function or method that takes c_T as argument
 }
 
 typified_models = {'std': 'standard DEB model',
@@ -201,7 +203,10 @@ class ModelDict(collections.abc.Mapping):
     def __init__(self, model: 'Model', c_T: float=1., locals: Mapping[str, Any]={}):
         self.model = model
         self.c_T = c_T
-        self.locals = locals
+        self.locals = {'c_T': c_T}
+        for key in ('log', 'log10', 'exp'):
+            self.locals[key] = getattr(numpy, key)
+        self.locals.update(locals)
 
     def __getitem__(self, key: str):
         if key in self.locals:
@@ -210,8 +215,16 @@ class ModelDict(collections.abc.Mapping):
             return eval(compound_variables[key], {}, self)
         if not hasattr(self.model, key):
             raise KeyError()
+        value = getattr(self.model, key)
         assert key in temperature_correction, 'No temperature correction available for %s' % key
-        return getattr(self.model, key) * self.c_T**temperature_correction[key]
+        correction = temperature_correction[key]
+        if correction is None:
+            # This item is a function or bound method that takes c_T as named argument
+            value = functools.partial(value, c_T=self.c_T)
+        else:
+            # This item is a numerical value, e.g., a primary parameter
+            value *= self.c_T**correction
+        return value
 
     def __len__(self) -> int:
         return len(frozenset(list(self.locals.keys()) + list(compound_variables.keys()) + dir(self.model)))
@@ -500,6 +513,7 @@ class Model(object):
 
     def age_at_maturity(self, E_H: float, precision: float=0.001, c_T: float=1.) -> float:
         """Get age (time since start of development) at specific maturity value."""
+        assert E_H >= 0., 'E_H must be non-negative but is %s.' % E_H
         if E_H not in self.maturity_states:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
             tmax = min(100 * self.a_99, 365 * 200.)

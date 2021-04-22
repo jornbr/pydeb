@@ -50,6 +50,31 @@ def run(interactive: bool=False):
                 ax.axvline(model.a_99 / 365)
                 matplotlib.pyplot.show()
 
+        continue   # for now, do not test python engine (below), as it is slow and we do not have a good metric for judging differences yet
+
+        py_engine = pydeb.engine.create(use_cython=False)
+        for name in dir(py_engine):
+            if name in pydeb.temperature_correction:
+                setattr(py_engine, name, getattr(model, name))
+        model.engine = py_engine
+        pyresult = model.simulate(n, dt, int(n / 1000))
+        for name, values in pyresult.items():
+            adiff = abs(values - result[name])
+            avalues = abs(values)
+            valid = avalues > 1e-12
+            rdiff = adiff[valid] / avalues[valid]
+            print(name, rdiff.max())
+        if interactive:
+            import matplotlib.pyplot
+            fig = matplotlib.pyplot.figure()
+            for i, name in enumerate(pyresult):
+                ax = fig.add_subplot(len(pyresult), 1, i + 1)
+                ax.plot(result['t'] / 365, result[name])
+                ax.plot(pyresult['t'] / 365, pyresult[name])
+                ax.set_title(name)
+                ax.grid(True)
+                ax.set_xlabel('time (yr)')
+            matplotlib.pyplot.show()
     return nfailed == 0
 
 if __name__ == '__main__':
