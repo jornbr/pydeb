@@ -27,7 +27,8 @@ def run(interactive: bool=False):
         assert (numpy.diff(result['L']) >= 0.).all()
         assert (numpy.diff(result['E_H']) >= 0.).all()
         assert (numpy.diff(result['E_R']) >= 0.).all()
-        assert (numpy.diff(result['cumR']) >= 0.).all()
+        assert (numpy.diff(result['N_R']) >= 0.).all()
+        assert (numpy.diff(result['N_RS']) >= 0.).all()
         assert (numpy.diff(result['S']) <= 0.).all()
         ok = True
         ok = compare('L_i', 'cm', model.L_i, result['L'][-1]) and ok
@@ -36,7 +37,7 @@ def run(interactive: bool=False):
         if not ok:
             print('  a_b: %.3g d' % model.a_b)
             print('  a_99: %.3g d' % model.a_99)
-            print('  E0: %.3g J' % model.E_0)
+            print('  E_0: %.3g J' % model.E_0)
             nfailed += 1
 
             if interactive:
@@ -45,8 +46,8 @@ def run(interactive: bool=False):
                 ax = fig.gca()
                 ax.plot(result['t'] / 365, result['L'])
                 ax.set_title(taxon)
-                ax.grid(True)
-                ax.set_xlabel('time (yr)')
+                    ax.grid(True)
+                    ax.set_xlabel('time (yr)')
                 ax.axvline(model.a_99 / 365)
                 matplotlib.pyplot.show()
 
@@ -75,6 +76,7 @@ def run(interactive: bool=False):
                 ax.grid(True)
                 ax.set_xlabel('time (yr)')
             matplotlib.pyplot.show()
+    print('All test completed successfully' if nfailed == 0 else '%i FAILURES' % nfailed)
     return nfailed == 0
 
 if __name__ == '__main__':
