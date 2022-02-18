@@ -46,8 +46,8 @@ def run(interactive: bool=False):
                 ax = fig.gca()
                 ax.plot(result['t'] / 365, result['L'])
                 ax.set_title(taxon)
-                    ax.grid(True)
-                    ax.set_xlabel('time (yr)')
+                ax.grid(True)
+                ax.set_xlabel('time (yr)')
                 ax.axvline(model.a_99 / 365)
                 matplotlib.pyplot.show()
 
