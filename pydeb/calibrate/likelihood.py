@@ -132,11 +132,11 @@ class ImpliedProperty(Component):
         return -0.5 * z * z
 
 class ExpressionAtSurvival(Component):
-    def __init__(self, S: float, temperature: float=20., f: float=1.):
+    def __init__(self, S: float, temperature: float=20., **kwargs):
         Component.__init__(self)
         self.S = S
         self.temperature = temperature
-        self.f = f
+        self.kwargs = kwargs
         self.expressions = []
 
     def add_expression(self, expression: str, value: float, sd: float, transform: Callable[[float], float]=null_transform):
@@ -145,7 +145,7 @@ class ExpressionAtSurvival(Component):
     def calculate_ln_likelihood(self, values) -> float:
         model: pydeb.Model = values['model']
         c_T = model.get_temperature_correction(self.temperature)
-        result = model.state_at_survival(self.S, c_T=c_T, f=self.f)
+        result = model.state_at_survival(self.S, c_T=c_T, **self.kwargs)
         lnl = 0.
         for expression, value, sd, transform in self.expressions:
             value_mod = model.evaluate(expression, c_T=c_T, locals=result)
@@ -155,44 +155,53 @@ class ExpressionAtSurvival(Component):
         return lnl
 
 class TimeSeries(Component):
-    def __init__(self, t, temperature: float=20., f: float=1., offset: float=0.):
+    def __init__(self, t, temperature: float=20., transform=None, t_end: Optional[float]=None, delta_t: Optional[float]=None, **kwargs):
         Component.__init__(self)
         self.t = numpy.array(t)
+        assert self.t.ndim == 1, 'Time has shape %s, but it must be a 1-dimensional array' % (self.t.shape,)
         self.temperature = temperature
-        self.f = f
-        self.offset = offset
+        self.kwargs = kwargs
+        self.transform = transform
         self.data = []
+        t_end = t_end if t_end is not None else self.t[-1]
+        self.delta_t = delta_t or t_end / 1000.
+        self.nt = int(t_end / self.delta_t + 1)
+        self.endpoint_only = self.t.size == 1 and self.transform is None
+        if self.endpoint_only:
+            self.nsave = self.nt
+            self.delta_t = t_end / self.nt
+        else:
+            self.nsave = max(1, self.nt // 1000)
+            self.nt += self.nsave
 
     def add_series(self, expression: str, values, sd=None, transform: Callable[[float], float]=null_transform):
-        assert sd is not None or len(values) > 1, 'Cannot estimate standard deviation with only one observation.'
-        assert sd is None or sd > 0, 'Standard deviation must be > 0, or None for it to be estimated (it is %s)' % sd
         expression = {'WM': 'L**3 + E * w_E / mu_E / d_E'}.get(expression, expression)
         expression = compile(expression, '<string>', 'eval')
         values = numpy.array(values)
-        assert values.shape == self.t.shape, '%s: shape of values %s does not match shape of times %s' % (expression, values, self.t)
-        self.data.append((expression, values, None if sd is None else sd * sd, transform))
+        assert values.shape == self.t.shape, '%s: shape of values %s does not match shape of times %s' % (expression, values.shape, self.t.shape)
+        sd = None if sd is None else numpy.array(sd)
+        assert sd is not None or values.size > 1, 'Cannot estimate standard deviation with only one observation.'
+        assert sd is None or sd.ndim == 0 or sd.shape == self.t.shape, '%s: shape of standard deviation %s is not compatible with shape of values %s' % (expression, sd.shape, values.shape)
+        assert sd is None or (sd > 0).all(), 'Standard deviation must be > 0, or None for it to be estimated (it is %s)' % sd
+        self.data.append((expression, values, None if sd is None else sd**2, transform))
 
     def calculate(self, model: pydeb.Model, values):
         # Compute temperature correction factor
         c_T = model.get_temperature_correction(self.temperature)
 
-        # Determine time offset (if any)
-        # Observation times will model times minus the offset
-        t_offset = self.offset if isinstance(self.offset, float) else model.evaluate(self.offset, c_T=c_T, locals=self.get_locals(values))
-
         # Time integration
-        delta_t = (self.t[-1] + t_offset) / 1000
-        nt = int((self.t[-1] + t_offset) / delta_t + 1)
-        nsave = max(1, int(numpy.floor(nt / 1000)))
-        result = model.simulate(nt, delta_t, nsave, c_T=c_T, f=self.f)
+        result = model.simulate(self.nt, self.delta_t, self.nsave, c_T=c_T, **self.kwargs)
 
-        # Extract requested expression
-        t_mod = result['t'] - t_offset
-        results = numpy.empty((t_mod.size, len(self.data)))
+        # Allow the user to modify model results in place
+        # For instance, by applying an offset to the time axis if observation tiems are relative to a life history event (e.g, birth)
+        if self.transform is not None:
+            self.transform(model, result, c_T=c_T, **self.get_locals(values))
+
+        results = numpy.empty((result['t'].size, len(self.data)))
         for i, (expression, _, _, _) in enumerate(self.data):
             results[:, i] = model.evaluate(expression, c_T=c_T, locals=result)
 
-        return t_mod, results
+        return result['t'], results
 
     def calculate_ln_likelihood(self, values):
         t_mod, results = self.calculate(values['model'], values)
@@ -200,12 +209,13 @@ class TimeSeries(Component):
         lnl = 0
         for i, (_, values, var, tf) in enumerate(self.data):
             # Linearly interpolate model results to time of observations
-            values_mod = numpy.interp(self.t, t_mod, results[:, i])
+            values_mod = results[-1, i] if self.endpoint_only else numpy.interp(self.t, t_mod, results[:, i])
 
             # Calculate contribution to likelihood (estimate variance if not provided)
             delta2 = (tf(values_mod) - values)**2
             if var is None:
+                # Use unbiased estimate of variance from model-observation difference
                 var = delta2.sum() / (delta2.size - 1)
-            lnl += -0.5 * delta2.size * numpy.log(var) - 0.5 * (delta2 / var).sum()
+            lnl += -0.5 * (numpy.log(var) + delta2 / var).sum()
         return lnl
 

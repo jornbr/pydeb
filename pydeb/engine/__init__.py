@@ -136,7 +136,7 @@ class PyEngine(object):
         L_m3 = L_m**3
 
         def dy(y, t0: float):
-            E, L, E_H, E_R, Q, H, S, cumR, cumt = map(float, y)
+            E, L, E_H, E_R, Q, H, S, N_RS, cumt = map(float, y)
             L2 = L * L
             L3 = L * L2
             s = max(1., min(s_M, L / L_b))

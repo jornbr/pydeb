@@ -9,31 +9,16 @@ from .optimize cimport Function, optimize, brentq
 DEF onethird = 0.3333333333333333
 
 @cython.final
-cdef class error_in_E(Function):
-    cdef double delta_t
-    cdef Model model
-    cdef double E_m
-
-    @cython.cdivision(True)
-    cdef double evaluate(error_in_E self, double x) nogil:
-        cdef double a_b, E_b, L_b
-        E_0 = 10.**x
-        a_b, E_b, L_b = self.model.get_birth_state(E_0, self.delta_t)
-        if a_b == -1.:
-            return INFINITY
-        ssq = (log10(E_b) - 3 * log10(L_b) - log10(self.E_m))**2
-        return ssq
-
-@cython.final
 cdef class E_Hb_difference(Function):
     cdef double delta_t
     cdef Model model
     cdef double E_Hb
+    cdef double f
 
     @cython.cdivision(True)
     cdef double evaluate(E_Hb_difference self, double x) nogil:
         cdef double E_H
-        E_H = self.model.get_birth_state(x, self.delta_t)[2]
+        E_H = self.model.get_birth_state(x, self.delta_t, self.f)[2]
         return E_H - self.E_Hb
 
 @cython.final
@@ -53,7 +38,6 @@ cdef class Model:
     cdef public double h_a
     cdef public double s_G
 
-    cdef public double E_0
     cdef public double L_b
     cdef public double L_m
     cdef public double L_T
@@ -61,38 +45,33 @@ cdef class Model:
     cdef public double s_M
 
     @cython.cdivision(True)
-    def get_E_0(Model self, double E_0_left, double E_0_right, double delta_t, double precision):
-        #cdef error_in_E func = error_in_E()
-        #func.model = self
-        #func.delta_t = delta_t
-        #func.E_m = self.p_Am/self.v
-        #log10_E_0 = optimize(func, log10_E_0_left, log10_E_0_right)
-        #a_b, E_b, L_b = self.get_birth_state(10.**log10_E_0, delta_t)
-        #return log10_E_0, a_b, L_b
+    def get_E_0(Model self, double E_0_left, double E_0_right, double delta_t, double precision, double f=1.):
         cdef E_Hb_difference func = E_Hb_difference()
         func.model = self
         func.delta_t = delta_t
         func.E_Hb = self.E_Hb
+        func.f = f
         E_0 = brentq(func, E_0_left, E_0_right, xtol = 2e-12, rtol=precision, maxiter=100)
-        a_b, L_b, _ = self.get_birth_state(E_0, delta_t)
+        a_b, L_b, _ = self.get_birth_state(E_0, delta_t, f)
         return E_0, a_b, L_b
 
     @cython.cdivision(True)
-    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t) nogil:
+    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t, double f) nogil:
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
         cdef double L2, L3, invdenom, p_C
 
         cdef int done = 0
 
-        cdef double p_M_per_kap = self.p_M/self.kap
-        cdef double p_T_per_kap = self.p_T/self.kap
-        cdef double E_G_per_kap = self.E_G/self.kap
+        cdef double p_M_per_kap = self.p_M / self.kap
+        cdef double p_T_per_kap = self.p_T / self.kap
+        cdef double E_G_per_kap = self.E_G / self.kap
         cdef double one_minus_kap = 1. - self.kap
-        cdef double v_E_G_plus_P_T_per_kap = (self.v*self.E_G + self.p_T)/self.kap
+        cdef double v_E_G_plus_P_T_per_kap = (self.v * self.E_G + self.p_T) / self.kap
         cdef double v = self.v
         cdef double k_J = self.k_J
-        cdef double E_m = self.p_Am/self.v
+        cdef double E_m = f * self.p_Am / self.v
+        cdef double L_i = f * self.kap * self.p_Am / self.p_M - self.p_T / self.p_M
 
         t, E, L, E_H = 0., E_0, 0., 0.
         while done == 0:
@@ -103,12 +82,8 @@ cdef class Model:
             dL = (E * v - (p_M_per_kap * L + p_T_per_kap) * L3) * invdenom * onethird
             dE = -p_C
             dE_H = one_minus_kap * p_C - k_J * E_H
-            L_new = L + delta_t * dL
-            if dL <= 0:
-                delta_t = (E - L**3 * E_m) / p_C
-                L_new = L + delta_t * dL
-                done = 1
-            elif E + delta_t * dE < E_m * L_new * L_new * L_new:
+            L_new = min(L_i, L + delta_t * dL)  # If L tends to go above L_i, it would shrink later on. E_0 is then too high. We just need to return E_H >> E_Hb
+            if E + delta_t * dE < E_m * L_new * L_new * L_new:
                 p = p_C / (dL * E_m)
                 q = - (E + p_C * L / dL) / E_m
                 c1 = -q/2
@@ -125,11 +100,11 @@ cdef class Model:
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
-    def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0.):
-        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, s_M, inv_L_b, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
+    def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double E_0, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0., double E_H_crit=-1.):
+        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, inv_L_b, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
         cdef double E_m, L_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap, p_Am_f
-        cdef double L2, L3, s, p_C, p_R, invdenom
-        cdef double E, L, E_H, E_R, Q, H, S, cumR, cumt
+        cdef double L2, L3, s, p_C, invdenom
+        cdef double E, L, E_H, E_R, Q, H, S, RSint, cumt
         cdef int i, isave, devel_state, steps_till_save
 
         kap = self.kap
@@ -144,10 +119,8 @@ cdef class Model:
         E_Hp = self.E_Hp
         s_G = self.s_G
         h_a = self.h_a * c_T * c_T * delta_t * delta_t
-        inv_E_0 = 1. / self.E_0
+        inv_E_0 = 1. / E_0
         kap_R = self.kap_R
-        s_M = self.s_M
-        inv_L_b = 1. / self.L_b
         inv_delta_t = 1. - 1e-8
 
         E_m = p_Am / v
@@ -162,15 +135,21 @@ cdef class Model:
         devel_state = devel_state_ini
         p_Am_f = p_Am * f
 
+        if E_H_crit == -1.:
+            E_H_crit = 2. * E_Hp
+
         dE_R = 0.
+        s = 1.
         with nogil:
             isave = 0
             steps_till_save = n if nsave == 0 else 0
-            E, L, E_H, E_R, Q, H, S, cumR, cumt = self.E_0, 0., 0., 0., 0., 0., 1., 0., 0.
+            E, L, E_H, E_R, Q, H, S, cumRS, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
             if devel_state == -1:
+                # foetal development: no initila reserve, constant increase in length until birth
                 E = 0.
+                dL = onethird * v
             for i in range(n + 1):
-                if nsave == 0 and S < S_crit:
+                if nsave == 0 and (S < S_crit or E_H >= E_H_crit):
                     steps_till_save = 0
                 if steps_till_save == 0:
                     result[isave, 0] = i * delta_t
@@ -181,19 +160,20 @@ cdef class Model:
                     result[isave, 5] = Q / delta_t / delta_t
                     result[isave, 6] = H / delta_t
                     result[isave, 7] = S
-                    result[isave, 8] = kap_R * cumR * inv_E_0
+                    result[isave, 8] = kap_R * RSint * inv_E_0
                     result[isave, 9] = cumt * delta_t
 
                 L2 = L * L
                 L3 = L * L2
-                s = max(1., min(s_M, L * inv_L_b))
+                if devel_state == 2:
+                    # Between birth and metamorphosis: update acceleration factor
+                    s = L * inv_L_b
 
                 # Calculate current p_C (J/d) and update to next L and E
                 if (devel_state == -1):
                     # developing foetus - explicit equations for L(t) and E(t)
-                    # t = i * delta_t, but here were are computing the state for the next time step, i + 1
                     p_C = v_E_G_plus_P_T_per_kap * L2 + p_M_per_kap * L3
-                    L = onethird * v * (i + 1)
+                    L += dL
                     E = L * L * L * E_m
                 else:
                     invdenom = 1. / (E + E_G_per_kap * L3)
@@ -208,21 +188,31 @@ cdef class Model:
                     L += dL
 
                 # Change in maturity (J) and reproduction buffer (J)
-                p_R = one_minus_kap * p_C - k_J * E_H   # J/d
-                if devel_state < 3:
-                    # maturation: update maturity and development state
-                    E_H += p_R
-                    if (E_H >= E_Hp):
-                        p_R = E_H - E_Hp
-                        E_H = E_Hp
-                        devel_state = 3   # adult
-                    elif (E_H > E_Hb):
-                        devel_state = 2   # juvenile (post birth)
-                if devel_state == 3:
-                    # reproduction (cumulative allocation in J/d and average total offspring over lifetime in #)
-                    dE_R = p_R
-                    E_R += dE_R
-                    cumR += S * dE_R
+                dE_H = one_minus_kap * p_C - k_J * E_H   # J/dt
+                E_H += dE_H    # first add all to maturity buffer; anything above E_Hp will be moved to reproduction buffer later
+
+                # Determine whether the increase in maturity triggered a life history event
+                if devel_state < 2 and E_H >= E_Hb:      # *** birth ***
+                    f_delta_t = (E_H - E_Hb) / dE_H      # fraction of the time step that falls after birth (linear interpolation of E_H)
+                    L_b = L - f_delta_t * dL             # linear interpolation to length-at-birth (undo part of the already-applied delta_t)
+                    inv_L_b = 1. / L_b                   # store reciprocal of length-at-birth for future computation of acceleration
+                    E += f_delta_t * p_Am_f * L_b * L_b  # add assimilation for the fraction of the time step that falls after birth
+                    devel_state = 2
+                if devel_state == 2 and E_H >= E_Hj:     # *** metamorphosis ***
+                    f_delta_t = (E_H - E_Hj) / dE_H      # fraction of the time step that falls after metamorphosis (linear interpolation of E_H)
+                    L_j = L - f_delta_t * dL             # linear interpolation to length-at-metamorphosis (undo part of the already-applied delta_t)
+                    s = self.s_M if f == 1. else L_j * inv_L_b                    # calculate final acceleration factor (s_M)
+                    #s = L_j * inv_L_b
+                    devel_state = 3
+                if devel_state == 3 and E_H >= E_Hp:     # *** puberty ***
+                    devel_state = 4
+
+                # If this is a mature individual, move all E_H > E_Hp into reproduction buffer
+                if devel_state == 4:
+                    dE_R = E_H - E_Hp    # allocation to reproduction buffer (J/dt)
+                    E_H = E_Hp           # reset E_H to E_Hp
+                    E_R += dE_R          # cumulative allocation (J)
+                    RSint += S * dE_R    # life time expected allocation (J)
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
                 dQ = max((Q * s_G_per_L_m3_E_m + h_a_per_E_m) * max(0., p_C), -Q * inv_delta_t)
@@ -230,10 +220,10 @@ cdef class Model:
                 dS = 0. if L3 <= 0. or S < 0. else -min(inv_delta_t, H / L3) * S
 
                 # Update state variables related to survival
-                Q += dQ     # damage inducing compounds (1/d2)
-                H += dH     # hazard rate (1/d) multiplied by structural volume
+                Q += dQ     # damage inducing compounds (1/dt2)
+                H += dH     # hazard rate (1/dt) multiplied by structural volume
                 S += dS     # survival (-)
-                cumt += S   # average life span (d)
+                cumt += S   # average life span (dt)
 
                 # Save diagnostics
                 if steps_till_save == 0:
@@ -361,7 +351,7 @@ cdef class Model:
         return -1., -1., -1.
 
     @cython.cdivision(True)
-    cpdef (double, double) find_maturity_egg(Model self, double E_H_target, double delta_t, double t_max=365000.):
+    cpdef (double, double) find_maturity_egg(Model self, double E_H_target, double delta_t, double E_0, double t_max=365000.):
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
         cdef double L2, L3, denom, p_C
@@ -377,7 +367,7 @@ cdef class Model:
         cdef double k_J = self.k_J
         cdef double E_m = self.p_Am / self.v
 
-        t, E, L, E_H = 0., self.E_0, 0., 0.
+        t, E, L, E_H = 0., E_0, 0., 0.
         with nogil:
             done = 0 if E_H < E_H_target else 1
             while done == 0:

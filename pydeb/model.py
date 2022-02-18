@@ -53,7 +53,9 @@ long_names = {
     's_M': 'acceleration at metamorphosis',
     'del_M': 'shape coefficient (structural : physical length)',
     'S': 'survival',
-    'N_R': 'expected lifetime reproductive output',
+    'N_R': 'cumulative reproductive output',
+    'N_RS': 'expected cumulative reproductive output (accounting for survival)',
+    'N_i': 'expected lifetime reproductive output',
 }
 
 units = {
@@ -97,6 +99,8 @@ units = {
     'del_M': '-',
     'S': '-',
     'N_R': '#',
+    'N_RS': '#',
+    'N_i': '#',
 }
 
 temperature_correction = {
@@ -139,8 +143,12 @@ temperature_correction = {
     'mu_E': 0,
     'w_E': 0,
     'd_E': 0,
+    'N_i': 0,
     'N_R': 0,
+    'N_RS': 0,
     'age_at_maturity': None, # None means a function or method that takes c_T as argument
+    'state_at_event': None, # None means a function or method that takes c_T as argument
+    'state_at_maturity': None, # None means a function or method that takes c_T as argument
 }
 
 typified_models = {'std': 'standard DEB model',
@@ -331,6 +339,8 @@ class Model(object):
         self.d_E = 0.21   # specific density of reserve (g DM/cm3)
         # self.WM_per_E = self.w_E / self.mu_E / self.d_E # cm3/J
 
+        self.f2E_0 = {}
+
     def copy(self, **parameters):
         clone = Model(type=parameters.get('type', self.type))
         for p in primary_parameters + entry_parameters:
@@ -418,10 +428,10 @@ class Model(object):
             # The upper bound is found by multiplying the lower bound by 10 until the resulting
             # maturity-at-hatching exceeds the desired maturity-at-birth E_Hb.
             E_0_min = E_0_max = E_Hb / (1 - kap)
-            assert get_birth_state(E_0_min, delta_t)[2] <= E_Hb
+            assert get_birth_state(E_0_min, delta_t, 1.)[2] <= E_Hb
             for _ in range(10):
                 E_0_max *= 10
-                if get_birth_state(E_0_max, delta_t)[2] >= E_Hb:
+                if get_birth_state(E_0_max, delta_t, 1.)[2] >= E_Hb:
                     break
             else:
                 if verbose:
@@ -429,13 +439,13 @@ class Model(object):
                 return
 
             #def root(E_0, delta_t):
-            #    _, _, E_H = get_birth_state(E_0, delta_t)
+            #    _, _, E_H = get_birth_state(E_0, delta_t, 1.)
             #    return E_H - E_Hb
             if verbose:
                 print('Determining cost of an egg and state at birth...')
             while 1:
                 #E_0 = scipy.optimize.brentq(root, E_0_min, E_0_max, rtol=precision, args=(delta_t,))
-                #a_b, L_b, _ = get_birth_state(E_0, delta_t)
+                #a_b, L_b, _ = get_birth_state(E_0, delta_t, 1.)
                 E_0, a_b, L_b = get_E_0(E_0_min, E_0_max, delta_t=delta_t, precision=precision)
 
                 E_0_max = 2 * E_0
@@ -464,7 +474,6 @@ class Model(object):
             return
         a_99_max = self.a_b - numpy.log(1 - (0.99*L_i_min - self.L_b)/(L_i_min - self.L_b))/self.r_B
 
-        self.engine.E_0 = self.E_0
         self.engine.L_b = self.L_b
         self.engine.r_B = self.r_B
         self.engine.L_m = self.L_m
@@ -510,10 +519,11 @@ class Model(object):
             self.E_Hj: (self.a_j, self.L_j),
             self.E_Hp: (self.a_p, self.L_p)
         }
+        self.f2E_0[1.] = self.E_0
 
     def age_at_maturity(self, E_H: float, precision: float=0.001, c_T: float=1.) -> float:
         """Get age (time since start of development) at specific maturity value."""
-        assert E_H >= 0., 'E_H must be non-negative but is %s.' % E_H
+        assert E_H >= 0. and E_H <= self.E_Hp, 'E_H is %s but must take a value between 0 and E_Hp=%s (inclusive)' % (E_H, self.E_Hp)
         if E_H not in self.maturity_states:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
             tmax = min(100 * self.a_99, 365 * 200.)
@@ -522,7 +532,7 @@ class Model(object):
                 if self.type in ('stf', 'stx'):
                     a, L, _ = self.engine.find_maturity_foetus(E_H, delta_t=delta_t, t_max=tmax)
                 else:
-                    a, L = self.engine.find_maturity_egg(E_H, delta_t=delta_t, t_max=tmax)
+                    a, L = self.engine.find_maturity_egg(E_H, delta_t=delta_t, E_0=self.E_0, t_max=tmax)
             elif E_H < self.E_Hj:
                 # before metamophosis (i.e., during acceleration in V1 morph mode)
                 a, L = self.engine.find_maturity_v1(self.L_b, self.E_Hb, E_H, delta_t=delta_t, t_max=tmax, t_ini=self.a_b)
@@ -584,7 +594,7 @@ class Model(object):
         for name in primary_parameters:
             print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
         print('Implied traits:')
-        for name in ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i', 'a_m', 'N_R'):
+        for name in ('E_0', 'r_B', 'a_b', 'a_j', 'a_p', 'a_99', 'E_m', 'L_b', 'L_j', 'L_p', 'L_i', 's_M', 'R_i', 'a_m', 'N_i'):
             print('  %s [%s]: %.4g %s' % (name, long_names[name], eval(name, {}, d), units[name]))
 
     @property
@@ -594,51 +604,88 @@ class Model(object):
         return self.end_state_
 
     a_m = property(lambda self: self.end_state['a'])
-    N_R = property(lambda self: self.end_state['cumR'])
+    N_i = property(lambda self: self.end_state['N_RS'])
     a_S01 = property(lambda self: self.state_at_survival(0.01)['t'])
     a_S10 = property(lambda self: self.state_at_survival(0.10)['t'])
 
-    def state_at_survival(self, S: float, c_T: float=1., f: float=1., delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001) -> Mapping[str, float]:
+    def state_at_survival(self, S: float, **kwargs) -> Mapping[str, float]:
         """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
+        return self.state_at_event(S_crit=S, **kwargs)
+
+    def state_at_maturity(self, E_H: float, **kwargs) -> Mapping[str, float]:
+        """Get the model state at a specified maturity value (starting at 0 and increasing to E_Hp)"""
+        return self.state_at_event(E_H_crit=E_H, **kwargs)
+
+    def state_at_event(self, S_crit: Optional[float]=None, E_H_crit: Optional[float]=None, c_T: float=1., f: float=1., f_egg: float=None, delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001) -> Mapping[str, float]:
+        """Get the model state at a specified value of the survival function or maturity"""
         if not self.initialized:
             self.initialize()
         assert self.valid, 'Model parameterisation is not valid'
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
         assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
+        assert S_crit is not None or E_H_crit is not None, 'You must specify either S_crit or E_H_crit'
+        assert S_crit is None or (S_crit > 0. and S_crit <= 1.), 'S_crit is %s but must take a value between 0 (exclusive) and 1 (inclusive)' % S_crit
+        assert E_H_crit is None or (E_H_crit >= 0. and E_H_crit <= self.E_Hp), 'E_H_crit is %s but must take a value between 0 and E_Hp=%s (inclusive)' % (E_H_crit, self.E_Hp)
         if delta_t is None:
             delta_t = max(precision * 10, self.a_b * precision * 10) * 2
         n = int(math.ceil(t_max / delta_t))
         result = numpy.empty((1, 11))
-        self.engine.integrate(n, delta_t, 0, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, S_crit=S)
+
+        E_0 = self.E_0_at_f(f if f_egg is None else f_egg)
+        self.engine.integrate(n, delta_t, 0, result, E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, S_crit=S_crit or 0., E_H_crit=E_H_crit or -1.)
         return {
             't': result[0, 0],
             'E': result[0, 1],
             'L': result[0, 2],
             'E_H': result[0, 3],
             'E_R': result[0, 4],
+            'N_R': result[0, 4] / E_0,
             'S': result[0, 7],
-            'cumR': result[0, 8],
+            'N_RS': result[0, 8],
             'a': result[0, 9],
             'R': result[0, 10]
         }
 
-    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1.) -> Mapping[str, numpy.ndarray]:
+    def E_0_at_f(self, f):
+        if not self.initialized:
+            self.initialize()
+        assert self.valid, 'Model parameterisation is not valid'
+        if self.devel_state_ini != 1:
+            f = 1.
+        if f not in self.f2E_0:
+            L_i = f * self.kap * self.p_Am / self.p_M - self.p_T / self.p_M
+            E_m = f * self.E_m
+            p_C_i = L_i * L_i * E_m * (self.v * self.E_G + self.p_M * L_i + self.p_T) / (self.kap * E_m + self.E_G)
+            if self.k_J * self.E_Hb > (1 - self.kap) * p_C_i:
+                print('FAIL!!!')
+            E_0_min = self.E_Hb / (1. - self.kap)
+            precision = 0.001
+            delta_t = 10. * precision * self.a_b
+            state = self.engine.get_birth_state(1.1*self.E_0, delta_t, f)
+            assert state[2] > self.E_Hb, 'Expected E_Hb=%s at f=%s to be larger than original E_Hb=%s at f=1 (both using original E_0=%s) - %s' % (state[2], f, self.E_Hb, self.E_0, state)
+            self.f2E_0[f] = self.engine.get_E_0(E_0_min, 1.1*self.E_0, delta_t=delta_t, precision=precision, f=f)[0]
+            self.f2E_0[f] = min(self.f2E_0[f], self.E_0)
+        return self.f2E_0[f]
+
+    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1., f_egg: float=None) -> Mapping[str, numpy.ndarray]:
         if not self.initialized:
             self.initialize()
         assert self.valid, 'Model parameterisation is not valid'
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
         assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
 
+        E_0 = self.E_0_at_f(f if f_egg is None else f_egg)
         result = numpy.empty((n // nsave + 1, 11))
-        self.engine.integrate(n, delta_t, nsave, result, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
+        self.engine.integrate(n, delta_t, nsave, result, E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
         return {
             't': result[:, 0],
             'E': result[:, 1],
             'L': result[:, 2],
             'E_H': result[:, 3],
             'E_R': result[:, 4],
+            'N_R': result[:, 4] / E_0,
             'S': result[:, 7],
-            'cumR': result[:, 8],
+            'N_RS': result[:, 8],
             'a': result[:, 9],
             'R': result[:, 10]
         }
