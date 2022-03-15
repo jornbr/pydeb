@@ -114,7 +114,7 @@ class PyEngine(object):
         L = L_ini*exp(r/3*t)
         return t_ini + t, L
 
-    def integrate(self, n: int, delta_t: float, nsave: int, result: numpy.ndarray, c_T: float, f: float, devel_state_ini: int):
+    def integrate(self, n: int, delta_t: float, nsave: int, result: numpy.ndarray, c_T: float, f: float, devel_state_ini: int, y_ini=None):
         kap = self.kap
         v = self.v*c_T
         k_J = self.k_J*c_T
@@ -171,6 +171,8 @@ class PyEngine(object):
 
         assert result.shape == (n // nsave + 1, 11)
         y = numpy.array((E_0, 0., 0., 0., 0., 0., 1., 0., 0.))
+        if y_ini is not None:
+            y[:] = y_ini
         for it in range(n + 1):
             t = it * delta_t
             if it % nsave == 0:

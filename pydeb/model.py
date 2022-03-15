@@ -1,7 +1,8 @@
 import math
-from typing import Dict, Any, Mapping, Optional, Tuple
+from typing import Dict, Any, Mapping, Optional, Tuple, Union, Sequence, Iterable, Callable
 import collections.abc
 import functools
+import itertools
 
 import numpy
 
@@ -146,7 +147,12 @@ temperature_correction = {
     'N_i': 0,
     'N_R': 0,
     'N_RS': 0,
+    'S_b': 0,
+    'S_p': 0,
+    'S_j': 0,
     'age_at_maturity': None, # None means a function or method that takes c_T as argument
+    'state_at_survival': None, # None means a function or method that takes c_T as argument
+    'state_at_time': None, # None means a function or method that takes c_T as argument
     'state_at_event': None, # None means a function or method that takes c_T as argument
     'state_at_maturity': None, # None means a function or method that takes c_T as argument
 }
@@ -349,11 +355,11 @@ class Model(object):
         return clone
 
     def initialize(self, verbose: bool=False, precision: float=0.001):
-        assert self.p_T >= 0.
-        assert self.p_M >= 0.
-        assert self.p_Am >= 0.
-        assert self.v >= 0.
-        assert self.E_G >= 0.
+        assert self.p_T >= 0., 'p_T has invalid value %s' % self.p_T
+        assert self.p_M >= 0., 'p_M has invalid value %s' % self.p_M
+        assert self.p_Am >= 0., 'p_Am has invalid value %s' % self.p_Am
+        assert self.v >= 0., 'v has invalid value %s' % self.v
+        assert self.E_G >= 0., 'E_G has invalid value %s' % self.E_G
         self.valid = False
         self.kap = max(min(self.kap, 1.), 0.)
         self.kap_R = max(min(self.kap_R, 1.), 0.)
@@ -397,8 +403,12 @@ class Model(object):
 
         # Compute maximum catabolic flux (before any acceleration)
         # This flux needs to be able to at least support [= pay maintenance for] maturity at birth.
-        L_i = L_m - L_T
-        p_C_i = L_i * L_i * E_m * ((v * E_G_per_kap + p_T_per_kap) + p_M_per_kap * L_i) / (E_m + E_G_per_kap)
+        L_i_min = L_m - L_T   # not counting acceleration
+        if L_i_min < 0:
+            if verbose:
+                print('Ultimate structural length is negative: %s cm' % (L_i_min,))
+            return
+        p_C_i = L_i_min * L_i_min * E_m * ((v * E_G_per_kap + p_T_per_kap) + p_M_per_kap * L_i_min) / (E_m + E_G_per_kap)
         if k_J * E_Hb > (1 - kap) * p_C_i:
             if verbose:
                 print('Cannot reach maturity of %s J at birth (maximum reachable is %s J).' % (E_Hb, (1 - kap) * p_C_i / k_J))
@@ -463,10 +473,9 @@ class Model(object):
         self.E_m = E_m
 
         # Set time step for integration to metamorphosis and puberty
-        delta_t = max(precision * 10, self.a_b * precision * 10) * 2
+        delta_t = self._choose_delta_t(precision=precision)
 
         self.r_B = self.p_M / 3 / (E_m * kap + E_G)  # checked against p52, note f=1
-        L_i_min = self.L_m - self.L_T  # not counting acceleration!
         if L_i_min < self.L_b:
             # shrinking directly after birth
             if verbose:
@@ -521,11 +530,14 @@ class Model(object):
         }
         self.f2E_0[1.] = self.E_0
 
+    def _choose_delta_t(self, c_T: float=1., precision: float=0.001, max_delta_t=numpy.inf) -> float:
+        return min(max_delta_t, max(precision * 10, self.a_b * precision * 10) * 2 / c_T)
+
     def age_at_maturity(self, E_H: float, precision: float=0.001, c_T: float=1.) -> float:
         """Get age (time since start of development) at specific maturity value."""
         assert E_H >= 0. and E_H <= self.E_Hp, 'E_H is %s but must take a value between 0 and E_Hp=%s (inclusive)' % (E_H, self.E_Hp)
         if E_H not in self.maturity_states:
-            delta_t = max(precision * 10, self.a_b * precision * 10) * 2
+            delta_t = self._choose_delta_t(c_T, precision)
             tmax = min(100 * self.a_99, 365 * 200.)
             if E_H < self.E_Hb:
                 # before birth
@@ -576,6 +588,7 @@ class Model(object):
             f.write('      E_G: %s\n' % self.E_G)
             f.write('      h_a: %s\n' % self.h_a)
             f.write('      s_G: %s\n' % self.s_G)
+            f.write('      T_A: %s\n' % self.T_A)
 
             f.write('      L_b: %s\n' % self.L_b)
             f.write('      L_j: %s\n' % self.L_j)
@@ -607,6 +620,38 @@ class Model(object):
     N_i = property(lambda self: self.end_state['N_RS'])
     a_S01 = property(lambda self: self.state_at_survival(0.01)['t'])
     a_S10 = property(lambda self: self.state_at_survival(0.10)['t'])
+    S_b = property(lambda self: self.state_at_time(self.a_b)['S'])
+    S_p = property(lambda self: self.state_at_time(self.a_p)['S'])
+    S_j = property(lambda self: self.state_at_time(self.a_j)['S'])
+
+    def _unpack_state(self, result: numpy.ndarray, E_0: float, ind: Union[slice, int]=Ellipsis) -> numpy.ndarray:
+        return {
+            't': result[ind, 0],
+            'E': result[ind, 1],
+            'L': result[ind, 2],
+            'E_H': result[ind, 3],
+            'E_R': result[ind, 4],
+            'Q': result[ind, 5],
+            'H': result[ind, 6],
+            'S': result[ind, 7],
+            'N_RS': result[ind, 8],
+            'a': result[ind, 9],
+            's': result[ind, 10],
+            'R': result[ind, 11],
+            'N_R': self.kap_R * result[ind, 4] / E_0
+        }
+
+    def _get_initial_state(self, f_egg: Optional[float]=None, E_0: Optional[float]=None, y_ini: Optional[Mapping[str, float]]=None) -> numpy.ndarray:
+        if y_ini is not None:
+            y = numpy.array([y_ini[n] for n in ('E', 'L', 'E_H', 'E_R', 'Q', 'H', 'S', 'N_RS', 'a', 's')])
+        else:
+            y = numpy.zeros((10,))
+            if self.devel_state_ini != -1:
+                # initial development stage is not foetus (without reserve) but egg (with reserve)
+                y[0] = E_0 if E_0 is not None else self.E_0_at_f(f_egg if f_egg is not None else 1.)
+            y[6] = 1.   # initially 100% survival
+            y[9] = 1.   # initially acceleration is 1
+        return y
 
     def state_at_survival(self, S: float, **kwargs) -> Mapping[str, float]:
         """Get the model state at a specified value of the survival function (the probability of individuals surviving, starting at 1 and dropping to 0 over time)"""
@@ -616,79 +661,139 @@ class Model(object):
         """Get the model state at a specified maturity value (starting at 0 and increasing to E_Hp)"""
         return self.state_at_event(E_H_crit=E_H, **kwargs)
 
-    def state_at_event(self, S_crit: Optional[float]=None, E_H_crit: Optional[float]=None, c_T: float=1., f: float=1., f_egg: float=None, delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001) -> Mapping[str, float]:
-        """Get the model state at a specified value of the survival function or maturity"""
+    def state_at_event(self, S_crit: Optional[float]=None, E_H_crit: Optional[float]=None, c_T: float=1., f: float=1., delta_t: Optional[float]=None, t_max: float=365*100, precision: float=0.001, events: Sequence=(), event_callback=None, **kwargs) -> Mapping[str, float]:
+        """Get the model state at a specified value of the survival function (S_crit) or maturity (E_H_crit).
+        If both are None, integrate to the specified maximum end time (t_max)"""
         if not self.initialized:
             self.initialize()
         assert self.valid, 'Model parameterisation is not valid'
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
-        assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
-        assert S_crit is not None or E_H_crit is not None, 'You must specify either S_crit or E_H_crit'
         assert S_crit is None or (S_crit > 0. and S_crit <= 1.), 'S_crit is %s but must take a value between 0 (exclusive) and 1 (inclusive)' % S_crit
         assert E_H_crit is None or (E_H_crit >= 0. and E_H_crit <= self.E_Hp), 'E_H_crit is %s but must take a value between 0 and E_Hp=%s (inclusive)' % (E_H_crit, self.E_Hp)
         if delta_t is None:
-            delta_t = max(precision * 10, self.a_b * precision * 10) * 2
-        n = int(math.ceil(t_max / delta_t))
-        result = numpy.empty((1, 11))
+            delta_t = self._choose_delta_t(c_T, precision)
 
-        E_0 = self.E_0_at_f(f if f_egg is None else f_egg)
-        self.engine.integrate(n, delta_t, 0, result, E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, S_crit=S_crit or 0., E_H_crit=E_H_crit or -1.)
-        return {
-            't': result[0, 0],
-            'E': result[0, 1],
-            'L': result[0, 2],
-            'E_H': result[0, 3],
-            'E_R': result[0, 4],
-            'N_R': result[0, 4] / E_0,
-            'S': result[0, 7],
-            'N_RS': result[0, 8],
-            'a': result[0, 9],
-            'R': result[0, 10]
-        }
+        overridden_params = set()
 
-    def E_0_at_f(self, f):
+        kwargs.setdefault('f_egg', f)
+        result = numpy.empty((1, 12))
+        y_ini = result[0, 1:-1]
+        y_ini[:] = self._get_initial_state(**kwargs)
+
+        t_start = 0.
+        E_0 = self.E_0_at_f(f)
+        for event_time in itertools.chain(events, [numpy.inf]):
+            t_end = min(event_time, t_max)
+            duration = t_end - t_start
+            n = int(math.ceil(duration / delta_t))
+            current_delta_t = duration / n if n > 0 else delta_t
+            self.engine.integrate(n, current_delta_t, 0, result, E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, S_crit=S_crit or -1., E_H_crit=E_H_crit or -1., y_ini=y_ini)
+            if (S_crit is not None and result[0, 7] <= S_crit) or (E_H_crit is not None and result[0, 3] >= E_H_crit) or t_end == t_max:
+                result[0, 0] += t_start
+                break
+            t_start = t_end
+            c_T, f, E_0, params = event_callback(event_time, self, y_ini, c_T, f, E_0)
+            for p, v in params.items():
+                overridden_params.add(p)
+                setattr(self.engine, p, v)
+        for p in overridden_params:
+            setattr(self.engine, p, getattr(self, p))
+        return self._unpack_state(result, E_0, 0)
+
+    def _get_parameters_as_string(self) -> str:
+        return ', '.join(['%s=%s' % (n, getattr(self, n)) for n in primary_parameters])
+
+    def E_0_at_f(self, f) -> Optional[float]:
         if not self.initialized:
             self.initialize()
         assert self.valid, 'Model parameterisation is not valid'
         if self.devel_state_ini != 1:
             f = 1.
         if f not in self.f2E_0:
-            L_i = f * self.kap * self.p_Am / self.p_M - self.p_T / self.p_M
+            L_i = max(0., f * self.kap * self.p_Am / self.p_M - self.p_T / self.p_M)
             E_m = f * self.E_m
             p_C_i = L_i * L_i * E_m * (self.v * self.E_G + self.p_M * L_i + self.p_T) / (self.kap * E_m + self.E_G)
             if self.k_J * self.E_Hb > (1 - self.kap) * p_C_i:
-                print('FAIL!!!')
-            E_0_min = self.E_Hb / (1. - self.kap)
-            precision = 0.001
-            delta_t = 10. * precision * self.a_b
-            state = self.engine.get_birth_state(1.1*self.E_0, delta_t, f)
-            assert state[2] > self.E_Hb, 'Expected E_Hb=%s at f=%s to be larger than original E_Hb=%s at f=1 (both using original E_0=%s) - %s' % (state[2], f, self.E_Hb, self.E_0, state)
-            self.f2E_0[f] = self.engine.get_E_0(E_0_min, 1.1*self.E_0, delta_t=delta_t, precision=precision, f=f)[0]
-            self.f2E_0[f] = min(self.f2E_0[f], self.E_0)
+                # Cannot support maturity at birth at this low value for the functional response
+                self.f2E_0[f] = None
+            else:
+                E_0_min = self.E_Hb / (1. - self.kap)
+                precision = 0.001
+                delta_t = 10. * precision * self.a_b
+                state = self.engine.get_birth_state(1.1*self.E_0, delta_t, f)
+                assert state[2] > self.E_Hb, 'Expected E_Hb=%s at f=%s to be larger than original E_Hb=%s at f=1 (both using original E_0=%s) - %s. Parameterization: %s' % (state[2], f, self.E_Hb, self.E_0, state, self._get_parameters_as_string())
+                self.f2E_0[f] = self.engine.get_E_0(E_0_min, 1.1*self.E_0, delta_t=delta_t, precision=precision, f=f)[0]
+                self.f2E_0[f] = min(self.f2E_0[f], self.E_0)
         return self.f2E_0[f]
 
-    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1., f_egg: float=None) -> Mapping[str, numpy.ndarray]:
+    def state_at_time(self, t: float, **kwargs) -> Mapping[str, numpy.ndarray]:
+        return self.state_at_event(t_max=t, **kwargs)
+
+    def simulate(self, n: int, delta_t: float, nsave: int=1, c_T: float=1., f: float=1., **kwargs) -> Mapping[str, numpy.ndarray]:
         if not self.initialized:
             self.initialize()
         assert self.valid, 'Model parameterisation is not valid'
         assert f >= 0. and f <= 1., 'Invalid functional response f=%s (it must lie between 0 and 1)' % f
         assert c_T > 0., 'Invalid temperature correction factor c_T=%s (it must be larger than 0)' % c_T
 
-        E_0 = self.E_0_at_f(f if f_egg is None else f_egg)
-        result = numpy.empty((n // nsave + 1, 11))
-        self.engine.integrate(n, delta_t, nsave, result, E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini)
-        return {
-            't': result[:, 0],
-            'E': result[:, 1],
-            'L': result[:, 2],
-            'E_H': result[:, 3],
-            'E_R': result[:, 4],
-            'N_R': result[:, 4] / E_0,
-            'S': result[:, 7],
-            'N_RS': result[:, 8],
-            'a': result[:, 9],
-            'R': result[:, 10]
-        }
+        kwargs.setdefault('f_egg', f)
+        y_ini = self._get_initial_state(**kwargs)
+        result = numpy.empty((n // nsave + 1, 12))
+        self.engine.integrate(n, delta_t, nsave, result, self.E_0_at_f(f), c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, y_ini=y_ini)
+        return self._unpack_state(result, self.E_0_at_f(f))
+
+    def simulate2(self, times: Union[float, Sequence], c_T: float=1., f: float=1., delta_t: Optional[float]=None, precision: float=0.001, events: Sequence=(), event_callback=None, **kwargs):
+        assert (numpy.diff(times) > 0).all(), 'Time must be monotonically increasing'
+        assert (len(events) == 0 and event_callback is None) or (len(events) > 0 and event_callback is not None), 'Arguments events and event_callback must either both be provided, or not at all.'
+        if delta_t is None:
+            delta_t = self._choose_delta_t(c_T, precision)
+
+        single_time = numpy.ndim(times) == 0
+        if single_time:
+            times = numpy.reshape(times, -1)
+
+        events = list(events)
+        events.append(numpy.inf)
+
+        kwargs.setdefault('f_egg', f)
+        y_ini = self._get_initial_state(**kwargs)
+        t_start = 0.
+
+        result = numpy.empty((len(times), 12))
+        E_0s = numpy.empty((len(times),))
+        itime = 0
+        overridden_params = set()
+        E_0 = self.E_0_at_f(f)
+        for event_time in events:
+            assert itime < len(times), 'Next save index %i is not valid.' % itime
+            assert t_start <= event_time, 'Start time %s should not exceed event time %s' % (t_start, event_time)
+            while itime < len(times):
+                t_end = min(times[itime], event_time)
+                duration = t_end - t_start
+                n = int(numpy.ceil(duration / delta_t))
+                current_delta_t = delta_t if n == 0 else duration / n
+                self.engine.integrate(n, current_delta_t, 0, result[itime:itime+1, :], E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, y_ini=y_ini)
+                #print(event_time, t_start, t_end, self.engine.p_T, n, result[itime, 1])
+                y_ini = result[itime, 1:-1]
+                result[itime, 0] += t_start
+                t_start = t_end
+                if times[itime] > event_time:
+                    # We have now integrated till the event time and te next save time lies beyond - stop.
+                    break
+                E_0s[itime] = E_0
+                itime += 1
+            if itime == len(times):
+                break
+            c_T, f, E_0, params = event_callback(event_time, self, y_ini, c_T, f, E_0)
+            #print('res', c_T, f, E_0, params)
+            for p, v in params.items():
+                overridden_params.add(p)
+                setattr(self.engine, p, v)
+        for p in overridden_params:
+            setattr(self.engine, p, getattr(self, p))
+        if single_time:
+            result = result[-1, :]
+        return self._unpack_state(result, E_0s)
 
     def plot_result(self, t: numpy.ndarray, L: numpy.ndarray, S: numpy.ndarray, R: numpy.ndarray, E_H: numpy.ndarray, c_T: float=1., **kwargs):
         from matplotlib import pyplot
@@ -746,3 +851,39 @@ class Model(object):
 
         return fig
 
+def simulate_ensemble(models: Sequence[Model], selected_outputs: Iterable[str], T: Optional[float]=20., times: Optional[float]=None, before_simulate: Optional[Callable]=None, dtype='f4', progress_reporter: Callable[[float, str], None]=lambda value, status: None, **kwargs) -> Mapping[str, numpy.array]:
+        # Define time period for simulation based on entire ensemble
+        n = len(models)
+        c_Ts = numpy.array([model.get_temperature_correction(T) for model in models])
+        if times is None:
+            a_99_90 = numpy.percentile(numpy.array([model.a_99 for model in models]) / c_Ts, 90)
+            a_p_90 = numpy.percentile(numpy.array([model.a_p for model in models]) / c_Ts, 90)
+            t_end = min(max(a_99_90, a_p_90), 365.*200)
+            times = numpy.linspace(0, t_end, 1000)
+
+        results = {}
+        for key in selected_outputs:
+            results[key] = numpy.empty((n, times.size), dtype=dtype)
+
+        model2outputs = {}
+        def get_result(model: Model, c_T: float):
+            if model not in model2outputs:
+                current_kwargs = kwargs.copy()
+                current_kwargs['times'] = times
+                current_kwargs['c_T'] = c_T
+                if before_simulate is not None:
+                    before_simulate(model, current_kwargs)
+                result = model.simulate2(**current_kwargs)
+                outputs = {}
+                for key in selected_outputs:
+                    outputs[key] = model.evaluate(key, c_T=c_T, locals=result)
+                model2outputs[model] = outputs
+            return model2outputs[model]
+
+        for i, model in enumerate(models):
+            if (i + 1) % 100 == 0:
+                progress_reporter(i / n, 'simulating with model %i of %i' % (i + 1, n))
+            for key, values in get_result(model, c_Ts[i]).items():
+                results[key][i, :] = values
+        progress_reporter(1., 'simulations complete')
+        return results | {'t': times}

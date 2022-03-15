@@ -100,8 +100,8 @@ cdef class Model:
     @cython.cdivision(True)
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
-    def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double E_0, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=0., double E_H_crit=-1.):
-        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, inv_L_b, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
+    def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double E_0, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=-1., double E_H_crit=-1., double [::1] y_ini=None):
+        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
         cdef double E_m, L_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap, p_Am_f
         cdef double L2, L3, s, p_C, invdenom
         cdef double E, L, E_H, E_R, Q, H, S, RSint, cumt
@@ -138,15 +138,30 @@ cdef class Model:
         if E_H_crit == -1.:
             E_H_crit = 2. * E_Hp
 
-        dE_R = 0.
-        s = 1.
+        if y_ini is None:
+            E, L, E_H, E_R, Q, H, S, RSint, cumt, s = E_0, 0., 0., 0., 0., 0., 1., 0., 0., 1.
+            if devel_state == -1:
+                E = 0.
+        else:
+            E, L, E_H, E_R, Q, H, S, RSint, cumt, s = y_ini
+            E_R /= kap_R
+            Q *= delta_t * delta_t
+            H *= delta_t
+            RSint /= kap_R * inv_E_0
+            cumt /= delta_t
+        if E_H >= E_Hp:
+            devel_state = 4   # adult
+        elif E_H >= E_Hj:
+            devel_state = 3   # juvenile after metamorphosis
+        elif E_H >= E_Hb:
+            devel_state = 2   # juvenile before metamorphosis
+
         with nogil:
+            dE_R = 0.
             isave = 0
             steps_till_save = n if nsave == 0 else 0
-            E, L, E_H, E_R, Q, H, S, cumRS, cumt = E_0, 0., 0., 0., 0., 0., 1., 0., 0.
             if devel_state == -1:
-                # foetal development: no initila reserve, constant increase in length until birth
-                E = 0.
+                # foetal development: no initial reserve, constant increase in length until birth
                 dL = onethird * v
             for i in range(n + 1):
                 if nsave == 0 and (S < S_crit or E_H >= E_H_crit):
@@ -162,12 +177,10 @@ cdef class Model:
                     result[isave, 7] = S
                     result[isave, 8] = kap_R * RSint * inv_E_0
                     result[isave, 9] = cumt * delta_t
+                    result[isave, 10] = s
 
                 L2 = L * L
                 L3 = L * L2
-                if devel_state == 2:
-                    # Between birth and metamorphosis: update acceleration factor
-                    s = L * inv_L_b
 
                 # Calculate current p_C (J/d) and update to next L and E
                 if (devel_state == -1):
@@ -184,8 +197,11 @@ cdef class Model:
                         # no longer an embryo/foetus - feeding/assimilation is active
                         dE += p_Am_f * L2 * s
                     dL = (E * v * s - (p_M_per_kap * L + p_T_per_kap * s) * L3) * onethird * invdenom
-                    E += dE
-                    L += dL
+                    if devel_state == 2:
+                        # Between birth and metamorphosis: update acceleration factor
+                        s += dL / L * s
+                    E = max(0., E + dE)
+                    L = max(0., L + dL)
 
                 # Change in maturity (J) and reproduction buffer (J)
                 dE_H = one_minus_kap * p_C - k_J * E_H   # J/dt
@@ -195,14 +211,13 @@ cdef class Model:
                 if devel_state < 2 and E_H >= E_Hb:      # *** birth ***
                     f_delta_t = (E_H - E_Hb) / dE_H      # fraction of the time step that falls after birth (linear interpolation of E_H)
                     L_b = L - f_delta_t * dL             # linear interpolation to length-at-birth (undo part of the already-applied delta_t)
-                    inv_L_b = 1. / L_b                   # store reciprocal of length-at-birth for future computation of acceleration
                     E += f_delta_t * p_Am_f * L_b * L_b  # add assimilation for the fraction of the time step that falls after birth
                     devel_state = 2
+                    s = L / L_b                          # update acceleration based on the fraction of the time step between birth and metamorphosis
                 if devel_state == 2 and E_H >= E_Hj:     # *** metamorphosis ***
                     f_delta_t = (E_H - E_Hj) / dE_H      # fraction of the time step that falls after metamorphosis (linear interpolation of E_H)
                     L_j = L - f_delta_t * dL             # linear interpolation to length-at-metamorphosis (undo part of the already-applied delta_t)
-                    s = self.s_M if f == 1. else L_j * inv_L_b                    # calculate final acceleration factor (s_M)
-                    #s = L_j * inv_L_b
+                    s *= L_j / L                         # correct final acceleration
                     devel_state = 3
                 if devel_state == 3 and E_H >= E_Hp:     # *** puberty ***
                     devel_state = 4
@@ -227,7 +242,7 @@ cdef class Model:
 
                 # Save diagnostics
                 if steps_till_save == 0:
-                    result[isave, 10] = kap_R * dE_R * inv_E_0 / delta_t
+                    result[isave, 11] = kap_R * dE_R * inv_E_0 / delta_t
                     if nsave == 0:
                         break
                     isave += 1
