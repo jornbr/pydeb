@@ -16,7 +16,7 @@ cdef class E_Hb_difference(Function):
     cdef double f
 
     @cython.cdivision(True)
-    cdef double evaluate(E_Hb_difference self, double x) nogil:
+    cdef double evaluate(E_Hb_difference self, double x) noexcept nogil:
         cdef double E_H
         E_H = self.model.get_birth_state(x, self.delta_t, self.f)[2]
         return E_H - self.E_Hb
@@ -56,7 +56,7 @@ cdef class Model:
         return E_0, a_b, L_b
 
     @cython.cdivision(True)
-    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t, double f) nogil:
+    cpdef (double, double, double) get_birth_state(Model self, double E_0, double delta_t, double f) noexcept nogil:
         cdef double t, E, L, E_H
         cdef double dE, dL, dE_H
         cdef double L2, L3, invdenom, p_C

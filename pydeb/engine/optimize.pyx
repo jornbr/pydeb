@@ -8,11 +8,11 @@ from libc.math cimport fabs as abs
 from numpy.math cimport INFINITY
 
 cdef class Function:
-    cdef double evaluate(Function self, double x) nogil:
+    cdef double evaluate(Function self, double x) noexcept nogil:
         return 0
 
 
-cdef double optimize(Function func, double xa, double xb) nogil:
+cdef double optimize(Function func, double xa, double xb) noexcept nogil:
     cdef double tol = 1.48e-8
     cdef double _mintol = 1.0e-11
     cdef double _cg = 0.3819660
@@ -133,7 +133,7 @@ cdef double optimize(Function func, double xa, double xb) nogil:
     return x if iter < maxiter else INFINITY
 
 
-cdef (double, double, double, double, double, double, int) bracket(Function func, double xa, double xb, double grow_limit, int maxiter) nogil:
+cdef (double, double, double, double, double, double, int) bracket(Function func, double xa, double xb, double grow_limit, int maxiter) noexcept nogil:
     cdef double _gold = 1.618034  # golden ratio: (1.0+sqrt(5.0))/2.0
     cdef double _verysmall_num = 1e-21
     cdef double fa, fb, fc
@@ -203,7 +203,7 @@ cdef (double, double, double, double, double, double, int) bracket(Function func
 
 
 # From scipy.optimize.brentq (Zeros/brentq.c)
-cdef double brentq(Function func, double xa, double xb, double xtol, double rtol, int maxiter) nogil:
+cdef double brentq(Function func, double xa, double xb, double xtol, double rtol, int maxiter) noexcept nogil:
     cdef double xpre = xa, xcur = xb
     cdef double xblk = 0., fpre, fcur, fblk = 0., spre = 0., scur = 0., sbis
 
