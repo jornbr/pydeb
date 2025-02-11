@@ -15,7 +15,7 @@ setup(name='pydeb',
       packages=find_packages(),
       package_data={'pydeb.infer': ['data/*']},
       ext_modules = [
-          Extension('pydeb.engine.cmodel', ['pydeb/engine/cmodel.pyx', 'pydeb/engine/optimize.pxd']),
+          Extension('pydeb.engine.cmodel', ['pydeb/engine/cmodel.pyx']),
           Extension('pydeb.engine.optimize', ['pydeb/engine/optimize.pyx'])
       ],
       include_dirs=[numpy.get_include()],
