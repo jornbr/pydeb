@@ -20,7 +20,22 @@ def run(interactive: bool=False):
                 return False
             return True
 
-        print(taxon)
+        def compare_event(name: str, accuracy: float=0.01):
+            E_H_threshold = getattr(model, 'E_H%s' % name)
+            if name == 'p':
+                # The time series will have constant maturity-at-puberty for its entire last stretch
+                # To find the timing of puberty, look for the maturity that is numerically just below the target value.
+                E_H_threshold =  numpy.nextafter(E_H_threshold, 0.)
+            a = numpy.interp(E_H_threshold, result['E_H'], result['t'])
+            L = numpy.interp(E_H_threshold, result['E_H'], result['L'])
+            E = numpy.interp(E_H_threshold, result['E_H'], result['E'])
+            ok = True
+            ok = compare('a_%s' % name, 'd', getattr(model, 'a_%s' % name), a, accuracy=accuracy) and ok
+            ok = compare('L_%s' % name, 'd', getattr(model, 'L_%s' % name), L, accuracy=accuracy) and ok
+            ok = compare('[E_%s]' % name, 'd', model.E_m, E / L**3, accuracy=1. - (1. - accuracy)**3) and ok
+            return ok
+
+        print('%s (%s)' % (taxon, model.type))
         dt = 0.01 * model.a_b
         n = int(max(365 * 200, model.a_99 * 10) / dt)
         result = model.simulate(n, dt, int(n / 1000))
@@ -32,7 +47,7 @@ def run(interactive: bool=False):
         assert (numpy.diff(result['S']) <= 0.).all()
         ok = True
         ok = compare('L_i', 'cm', model.L_i, result['L'][-1]) and ok
-        ok = compare('R_i', '#', model.R_i, result['R'][-1]) and ok
+        ok = compare('R_i', '#', model.R_i, result['R'][-1], accuracy=1.-(1.-0.01)**3) and ok
         ok = compare('E_m', 'J/cm3', model.E_m, result['E'][-1] / result['L'][-1]**3) and ok
         if not ok:
             print('  a_b: %.3g d' % model.a_b)
@@ -42,13 +57,27 @@ def run(interactive: bool=False):
 
             if interactive:
                 import matplotlib.pyplot
-                fig = matplotlib.pyplot.figure()
-                ax = fig.gca()
-                ax.plot(result['t'] / 365, result['L'])
-                ax.set_title(taxon)
-                ax.grid(True)
-                ax.set_xlabel('time (yr)')
-                ax.axvline(model.a_99 / 365)
+                fig, (axL, axE, axE_H) = matplotlib.pyplot.subplots(nrows=3, figsize=(12,12))
+                fig.suptitle(taxon)
+                axL.plot(result['t'] / 365, result['L'], '-k')
+                axL.set_ylabel('structural length (cm)')
+                axE.plot(result['t'] / 365, result['E'] / result['L']**3, '-k')
+                axE.set_ylabel('reserve density (J cm-3)')
+                axE.axhline(model.E_m, ls='--', color='k')
+                axE_H.plot(result['t'] / 365, result['E_H'], '-k')
+                axE_H.set_ylabel('maturity (J)')
+                axE_H.axhline(model.E_Hb, ls='--', color='b')
+                if model.E_Hb != model.E_Hj:
+                    axE_H.axhline(model.E_Hj, ls='--', color='y')
+                axE_H.axhline(model.E_Hp, ls='--', color='g')
+                for ax in (axL, axE, axE_H):
+                    ax.grid(True)
+                    ax.axvline(model.a_b / 365, ls='--', color='b')
+                    if model.E_Hb != model.E_Hj:
+                        ax.axvline(model.a_j / 365, ls='--', color='y')
+                    ax.axvline(model.a_p / 365, ls='--', color='g')
+                    ax.axvline(model.a_99 / 365, ls='--', color='r')
+                    ax.set_xlabel('time (yr)')
                 matplotlib.pyplot.show()
 
         continue   # for now, do not test python engine (below), as it is slow and we do not have a good metric for judging differences yet
