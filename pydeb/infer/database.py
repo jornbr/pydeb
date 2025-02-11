@@ -1,6 +1,5 @@
 from __future__ import print_function
 
-import io
 import os
 from typing import Optional, List, Mapping
 
@@ -14,7 +13,7 @@ inverse_transforms = {'logit': lambda x: 1./(1. + numpy.exp(-x)), 'ln': numpy.ex
 transforms = {'logit': lambda x: numpy.log(x / (1 - x)), 'ln': numpy.log}
 
 def read_covariance(path: str):
-    with io.open(path, 'rU', encoding='utf-8') as f:
+    with open(path, 'r', encoding='utf-8') as f:
         collabels = f.readline().rstrip('\n').split('\t')[1:]
         cov = numpy.empty((len(collabels), len(collabels)))
         for i, (collabel, l) in enumerate(zip(collabels, f)):
@@ -25,7 +24,7 @@ def read_covariance(path: str):
         return tuple(collabels), cov
 
 def read_mean(path: str):
-    with io.open(path, 'rU', encoding='utf-8') as f:
+    with open(path, "r", encoding='utf-8') as f:
         rowlabels = []
         mean = []
         for l in f:
@@ -49,7 +48,7 @@ class Database(object):
         self.transforms: Mapping[str, Optional[str]] = {}
         self.distribution_units: Mapping[str, str] = {}
         self.inverse_transforms = {}
-        with io.open(os.path.join(self.root, 'features'), 'rU', encoding='utf-8') as f:
+        with open(os.path.join(self.root, 'features'), "r", encoding='utf-8') as f:
             for l in f:
                 name, unit = l.rstrip('\n').split('\t')
                 transform = None
@@ -75,7 +74,7 @@ class Database(object):
 
         print('  - means and covariances...', end='')
         self.id2stats = {}
-        with io.open(os.path.join(self.root, 'mean'), 'rU', encoding='utf-8') as fmean, io.open(os.path.join(self.root, 'cov'), 'rU', encoding='utf-8') as fcov:
+        with open(os.path.join(self.root, 'mean'), "r", encoding='utf-8') as fmean, open(os.path.join(self.root, 'cov'), "r", encoding='utf-8') as fcov:
             fcov.readline()
             labels_mean = [l.split(' (', 1)[0] for l in fmean.readline().rstrip('\n').split('\t')]
             assert len(labels_mean) == len(features) + 1
@@ -99,7 +98,7 @@ class Database(object):
 
         print('  - typical temperatures...', end='')
         self.typical_temperature: Mapping[str, float] = {}
-        with io.open(os.path.join(self.root, 'mean_temp'), 'rU', encoding='utf-8') as f:
+        with open(os.path.join(self.root, 'mean_temp'), "r", encoding='utf-8') as f:
             f.readline()
             for l in f:
                 taxonid, mean_temp = l.rstrip('\n').split('\t')
@@ -128,7 +127,7 @@ class Database(object):
 
         print('  - shape coefficients (del_M)...', end='')
         self.id2del_M: Mapping[str, Tuple[float, float]] = {}
-        with io.open(os.path.join(self.root, 'mean_del_M'), 'rU', encoding='utf-8') as fmean, io.open(os.path.join(self.root, 'cov_del_M'), 'rU', encoding='utf-8') as fvar:
+        with open(os.path.join(self.root, 'mean_del_M'), "r", encoding='utf-8') as fmean, open(os.path.join(self.root, 'cov_del_M'), "r", encoding='utf-8') as fvar:
             fmean.readline()
             fvar.readline()
             for lmean, lvar in zip(fmean, fvar):
@@ -154,7 +153,7 @@ class Database(object):
         if not os.path.isfile(path):
             return
         name2errors = {}
-        with io.open(path, 'rU', encoding='utf-8') as f:
+        with open(path, "r", encoding='utf-8') as f:
             labels =  f.readline().rstrip('\n').split('\t')[1:]
             for l in f:
                 for name, value in zip(labels, l.rstrip('\n').split('\t')[1:]):
@@ -166,7 +165,7 @@ class Database(object):
 
 class AmP(object):
     def __init__(self, dirpath: str):
-        with io.open(os.path.join(dirpath, 'amp_parameters'), 'rU', encoding='utf-8') as fpar, io.open(os.path.join(dirpath, 'amp_properties'), 'rU', encoding='utf-8') as fprop:
+        with open(os.path.join(dirpath, 'amp_parameters'), "r", encoding='utf-8') as fpar, open(os.path.join(dirpath, 'amp_properties'), "r", encoding='utf-8') as fprop:
             self.parameter_names = [name.rsplit(' (', 1)[0] for name in fpar.readline().rstrip('\n').split('\t')[2:]]
             self.property_names = [name.rsplit(' (', 1)[0] for name in fprop.readline().rstrip('\n').split('\t')[2:]]
             self.names, self.ids, self.parameters, self.properties = [], [], [], []
