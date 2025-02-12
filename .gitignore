@@ -8,3 +8,5 @@
 /pydeb/engine/*.html
 /dist
 /pydeb.egg-info
+.ipynb_checkpoints
+/.vs
