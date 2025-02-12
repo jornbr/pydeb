@@ -23,5 +23,7 @@ jobs:
       - name: Run tests
         run: |
           cd tests
+          pydeb -h
+          pydeb -v
           pydeb "Asterias rubens"
           python test_amp.py
