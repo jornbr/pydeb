@@ -143,11 +143,15 @@ cdef class Model:
             if devel_state == -1:
                 E = 0.
         else:
-            E, L, E_H, Q, H, S, RSint, cumt, s = y_ini
-            Q *= delta_t * delta_t
-            H *= delta_t
-            RSint /= kap_R_per_E_0
-            cumt /= delta_t
+            E = y_ini[0]
+            L = y_ini[1]
+            E_H = y_ini[2]
+            Q = y_ini[3] * delta_t * delta_t
+            H = y_ini[4] * delta_t
+            S = y_ini[5]
+            RSint = y_ini[6] / kap_R_per_E_0
+            cumt = y_ini[7] / delta_t
+            s = y_ini[8]
         if E_H >= E_Hp:
             devel_state = 4   # adult
         elif E_H >= E_Hj:
