@@ -101,10 +101,10 @@ cdef class Model:
     @cython.boundscheck(False) # turn off bounds-checking for entire function
     @cython.wraparound(False)  # turn off negative index wrapping for entire function
     def integrate(Model self, int n, double delta_t, int nsave, double [:, ::1] result not None, double E_0, double c_T=1., double f=1., int devel_state_ini=1, double S_crit=-1., double E_H_crit=-1., double [::1] y_ini=None):
-        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, inv_E_0, kap_R, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
+        cdef double kap, v, k_J, p_Am, p_M, p_T, E_G, E_Hb, E_Hj, E_Hp, s_G, h_a, kap_R_per_E_0, kap_R, inv_delta_t, h_a_per_E_m, s_G_per_L_m3_E_m
         cdef double E_m, L_m, E_G_per_kap, p_M_per_kap, p_T_per_kap, v_E_G_plus_P_T_per_kap, one_minus_kap, p_Am_f
         cdef double L2, L3, s, p_C, invdenom
-        cdef double E, L, E_H, E_R, Q, H, S, RSint, cumt
+        cdef double E, L, E_H, Q, H, S, RSint, cumt
         cdef int i, isave, devel_state, steps_till_save
 
         kap = self.kap
@@ -119,8 +119,8 @@ cdef class Model:
         E_Hp = self.E_Hp
         s_G = self.s_G
         h_a = self.h_a * c_T * c_T * delta_t * delta_t
-        inv_E_0 = 1. / E_0
         kap_R = self.kap_R
+        kap_R_per_E_0 = kap_R / E_0
         inv_delta_t = 1. - 1e-8
 
         E_m = p_Am / v
@@ -136,18 +136,17 @@ cdef class Model:
         p_Am_f = p_Am * f
 
         if E_H_crit == -1.:
-            E_H_crit = 2. * E_Hp
+            E_H_crit = INFINITY
 
         if y_ini is None:
-            E, L, E_H, E_R, Q, H, S, RSint, cumt, s = E_0, 0., 0., 0., 0., 0., 1., 0., 0., 1.
+            E, L, E_H, Q, H, S, RSint, cumt, s = E_0, 0., 0., 0., 0., 1., 0., 0., 1.
             if devel_state == -1:
                 E = 0.
         else:
-            E, L, E_H, E_R, Q, H, S, RSint, cumt, s = y_ini
-            E_R /= kap_R
+            E, L, E_H, Q, H, S, RSint, cumt, s = y_ini
             Q *= delta_t * delta_t
             H *= delta_t
-            RSint /= kap_R * inv_E_0
+            RSint /= kap_R_per_E_0
             cumt /= delta_t
         if E_H >= E_Hp:
             devel_state = 4   # adult
@@ -157,7 +156,6 @@ cdef class Model:
             devel_state = 2   # juvenile before metamorphosis
 
         with nogil:
-            dE_R = 0.
             isave = 0
             steps_till_save = n if nsave == 0 else 0
             if devel_state == -1:
@@ -171,13 +169,12 @@ cdef class Model:
                     result[isave, 1] = E
                     result[isave, 2] = L
                     result[isave, 3] = E_H
-                    result[isave, 4] = kap_R * E_R
-                    result[isave, 5] = Q / delta_t / delta_t
-                    result[isave, 6] = H / delta_t
-                    result[isave, 7] = S
-                    result[isave, 8] = kap_R * RSint * inv_E_0
-                    result[isave, 9] = cumt * delta_t
-                    result[isave, 10] = s
+                    result[isave, 4] = Q / delta_t / delta_t
+                    result[isave, 5] = H / delta_t
+                    result[isave, 6] = S
+                    result[isave, 7] = RSint * kap_R_per_E_0
+                    result[isave, 8] = cumt * delta_t
+                    result[isave, 9] = s
 
                 L2 = L * L
                 L3 = L * L2
@@ -204,8 +201,8 @@ cdef class Model:
                     L = max(0., L + dL)
 
                 # Change in maturity (J) and reproduction buffer (J)
-                dE_H = one_minus_kap * p_C - k_J * E_H   # J/dt
-                E_H += dE_H    # first add all to maturity buffer; anything above E_Hp will be moved to reproduction buffer later
+                dE_H = one_minus_kap * p_C - k_J * min(E_H, E_Hp)   # J/dt
+                E_H += dE_H    # add all to maturity + reproduction buffer
 
                 # Determine whether the increase in maturity triggered a life history event
                 if devel_state < 2 and E_H >= E_Hb:      # *** birth ***
@@ -220,14 +217,10 @@ cdef class Model:
                     s *= L_j / L                         # correct final acceleration
                     devel_state = 3
                 if devel_state == 3 and E_H >= E_Hp:     # *** puberty ***
+                    dE_H = E_H - E_Hp                    # dE_H now represents increment of reproductive buffer
                     devel_state = 4
-
-                # If this is a mature individual, move all E_H > E_Hp into reproduction buffer
                 if devel_state == 4:
-                    dE_R = E_H - E_Hp    # allocation to reproduction buffer (J/dt)
-                    E_H = E_Hp           # reset E_H to E_Hp
-                    E_R += dE_R          # cumulative allocation (J)
-                    RSint += S * dE_R    # life time expected allocation (J)
+                    RSint += S * dE_H                    # life time expected allocation (J)
 
                 # Damage-inducing compounds, damage, survival (0-1) - p 216
                 dQ = max((Q * s_G_per_L_m3_E_m + h_a_per_E_m) * max(0., p_C), -Q * inv_delta_t)
@@ -242,7 +235,9 @@ cdef class Model:
 
                 # Save diagnostics
                 if steps_till_save == 0:
-                    result[isave, 11] = kap_R * dE_R * inv_E_0 / delta_t
+                    if devel_state != 4:
+                        dE_H = 0.0
+                    result[isave, 10] = dE_H * kap_R_per_E_0 / delta_t
                     if nsave == 0:
                         break
                     isave += 1

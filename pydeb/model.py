@@ -624,33 +624,35 @@ class Model(object):
     S_p = property(lambda self: self.state_at_time(self.a_p)['S'])
     S_j = property(lambda self: self.state_at_time(self.a_j)['S'])
 
-    def _unpack_state(self, result: numpy.ndarray, E_0: float, ind: Union[slice, int]=Ellipsis) -> numpy.ndarray:
-        return {
-            't': result[ind, 0],
-            'E': result[ind, 1],
-            'L': result[ind, 2],
-            'E_H': result[ind, 3],
-            'E_R': result[ind, 4],
-            'Q': result[ind, 5],
-            'H': result[ind, 6],
-            'S': result[ind, 7],
-            'N_RS': result[ind, 8],
-            'a': result[ind, 9],
-            's': result[ind, 10],
-            'R': result[ind, 11],
-            'N_R': self.kap_R * result[ind, 4] / E_0
+    def _unpack_state(self, raw: numpy.ndarray, E_0: float, ind: Union[slice, int]=Ellipsis) -> numpy.ndarray:
+        assert raw.shape[-1] == 11
+        result = {
+            't': raw[ind, 0],
+            'E': raw[ind, 1],
+            'L': raw[ind, 2],
+            'E_H': numpy.minimum(raw[ind, 3], self.E_Hp),
+            'Q': raw[ind, 4],
+            'H': raw[ind, 5],
+            'S': raw[ind, 6],
+            'N_RS': raw[ind, 7],
+            'a': raw[ind, 8],
+            's': raw[ind, 9],
+            'R': raw[ind, 10],
         }
+        result['E_R'] = self.kap_R * (raw[ind, 3] - result['E_H'])
+        result['N_R'] = result['E_R'] * (1.0 / E_0)
+        return result
 
     def _get_initial_state(self, f_egg: Optional[float]=None, E_0: Optional[float]=None, y_ini: Optional[Mapping[str, float]]=None) -> numpy.ndarray:
         if y_ini is not None:
-            y = numpy.array([y_ini[n] for n in ('E', 'L', 'E_H', 'E_R', 'Q', 'H', 'S', 'N_RS', 'a', 's')])
+            y = numpy.array([y_ini[n] for n in ('E', 'L', 'E_H', 'Q', 'H', 'S', 'N_RS', 'a', 's')])
         else:
-            y = numpy.zeros((10,))
+            y = numpy.zeros((9,))
             if self.devel_state_ini != -1:
                 # initial development stage is not foetus (without reserve) but egg (with reserve)
                 y[0] = E_0 if E_0 is not None else self.E_0_at_f(f_egg if f_egg is not None else 1.)
-            y[6] = 1.   # initially 100% survival
-            y[9] = 1.   # initially acceleration is 1
+            y[5] = 1.   # S: initially 100% survival
+            y[8] = 1.   # s: initial acceleration is 1
         return y
 
     def state_at_survival(self, S: float, **kwargs) -> Mapping[str, float]:
@@ -676,7 +678,7 @@ class Model(object):
         overridden_params = set()
 
         kwargs.setdefault('f_egg', f)
-        result = numpy.empty((1, 12))
+        result = numpy.empty((1, 11))
         y_ini = result[0, 1:-1]
         y_ini[:] = self._get_initial_state(**kwargs)
 
@@ -688,7 +690,7 @@ class Model(object):
             n = int(math.ceil(duration / delta_t))
             current_delta_t = duration / n if n > 0 else delta_t
             self.engine.integrate(n, current_delta_t, 0, result, E_0, c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, S_crit=S_crit or -1., E_H_crit=E_H_crit or -1., y_ini=y_ini)
-            if (S_crit is not None and result[0, 7] <= S_crit) or (E_H_crit is not None and result[0, 3] >= E_H_crit) or t_end == t_max:
+            if (S_crit is not None and result[0, 6] <= S_crit) or (E_H_crit is not None and result[0, 3] >= E_H_crit) or t_end == t_max:
                 result[0, 0] += t_start
                 break
             t_start = t_end
@@ -738,7 +740,7 @@ class Model(object):
 
         kwargs.setdefault('f_egg', f)
         y_ini = self._get_initial_state(**kwargs)
-        result = numpy.empty((n // nsave + 1, 12))
+        result = numpy.empty((n // nsave + 1, 11))
         self.engine.integrate(n, delta_t, nsave, result, self.E_0_at_f(f), c_T=c_T, f=f, devel_state_ini=self.devel_state_ini, y_ini=y_ini)
         return self._unpack_state(result, self.E_0_at_f(f))
 
@@ -759,7 +761,7 @@ class Model(object):
         y_ini = self._get_initial_state(**kwargs)
         t_start = 0.
 
-        result = numpy.empty((len(times), 12))
+        result = numpy.empty((len(times), 11))
         E_0s = numpy.empty((len(times),))
         itime = 0
         overridden_params = set()
