@@ -251,7 +251,7 @@ class EnsembleRunner(threading.Thread):
         update_progress(1., 'done')
         print('Time taken for statistics: %s' % (timeit.default_timer() - sim_end_time))
 
-    def get_statistics(self, select: Optional[Iterable[str]]=None, percentiles: Iterable[float]=(2.5, 25, 50, 75, 97.5)):
+    def get_statistics(self, select: Optional[Iterable[str]]=None, percentiles: Iterable[float]=(2.5, 25, 50, 75, 97.5), variable_width_histogram: bool=True):
         """Return a dictionary with the current result of the analysis.
         
         The dictionary contains the following keys:
@@ -270,23 +270,39 @@ class EnsembleRunner(threading.Thread):
 
         selected_outputs = self.selected_outputs if select is None else set(self.selected_outputs).intersection(select)
 
-        def get_statistics(k: str, n: int) -> Mapping[str, Any]:
+        if variable_width_histogram:
+            NBIN = int(round(2*self.sample_size**0.4))  # https://itl.nist.gov/div898/handbook/prc/section2/prc211.htm
+            MIN_N = NBIN
+            quantile_grid = numpy.linspace(0.0, 1.0, NBIN+1)
+        else:
+            NBIN = 100
+            MIN_N = 1
+
+        def _get_statistics(k: str, n: int) -> Mapping[str, Any]:
             x = self.properties[k][:n]
             if k not in pydeb.primary_parameters:
                 # Correct for body temperature
                 x = x * self.c_Ts[:n]**pydeb.temperature_correction[k]
 
-            bincounts, binbounds = numpy.histogram(x, bins=100)
-            stats = dict([('perc%03i' % (10*p), v) for p, v in zip(percentiles, numpy.percentile(x, percentiles))])
-            stats['histogram'] = [binbounds[0], binbounds[-1], bincounts]
+            if variable_width_histogram:
+                # equiprobable bins
+                binbounds = numpy.quantile(x, quantile_grid)
+                w = binbounds[1:] - binbounds[:-1]
+                bincounts = (1.0 / NBIN) / numpy.where(w > 0, w, 1.0)
+            else:
+                bincounts, binbounds = numpy.histogram(x, bins=NBIN)
+
+            stats = {'perc%03i' % (10*p): v for p, v in zip(percentiles, numpy.percentile(x, percentiles))}
+            stats['histogram'] = [binbounds, bincounts]
+
             return stats
 
         result = {}
         if self.median_result is not None:
             result['median'] = dict([(key, self.median_result[key]) for key in selected_outputs])
         n = int(self.nmodels)
-        if n > 1:
-            result['properties'] = dict([(key, get_statistics(key, n)) for key in self.selected_properties])
+        if n > MIN_N:
+            result['properties'] = dict([(key, _get_statistics(key, n)) for key in self.selected_properties])
         n = int(self.nresults)
         if n > 0 and selected_outputs:
             result['t'] = self.t
@@ -314,7 +330,7 @@ class EnsembleRunner(threading.Thread):
                     These can be further filtered by specifying a subset here in the "select" argument.
 
         The dictionary returned by this method is equivalent to the dictionary returned by the get_statistics method,
-        but with status and progress keys added.
+        but with `status` and `progress` keys added.
         """
         result = {'status': self.status, 'progress': self.progress}
         result.update(self.get_statistics(select))
