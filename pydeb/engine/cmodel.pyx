@@ -1,9 +1,8 @@
 # cython: language_level=3
 
 cimport cython
-from numpy.math cimport INFINITY
 
-from libc.math cimport exp, log10, sqrt, cbrt
+from libc.math cimport exp, log10, sqrt, cbrt, INFINITY
 from .optimize cimport Function, optimize, brentq
 
 DEF onethird = 0.3333333333333333

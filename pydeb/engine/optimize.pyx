@@ -4,8 +4,7 @@
 # cython: cdivision=True
 
 cimport cython
-from libc.math cimport fabs as abs
-from numpy.math cimport INFINITY
+from libc.math cimport fabs as abs, INFINITY
 
 cdef class Function:
     cdef double evaluate(Function self, double x) noexcept nogil:
