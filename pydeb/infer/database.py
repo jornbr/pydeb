@@ -42,10 +42,10 @@ class Database(object):
         self.AmP: Optional[AmP] = None
         print('Reading database from %s...' % self.root)
 
+        old2new = {}
         if os.path.isfile(os.path.join(self.root, "id_map")):
             with open(os.path.join(self.root, "id_map"), encoding="utf-8") as f:
                 f.readline()  # header
-                old2new = {}
                 for l in f:
                     parts = l.strip().split("\t", 2)
                     old2new[parts[0]] = parts[1]
