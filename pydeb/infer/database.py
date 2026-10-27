@@ -42,6 +42,14 @@ class Database(object):
         self.AmP: Optional[AmP] = None
         print('Reading database from %s...' % self.root)
 
+        if os.path.isfile(os.path.join(self.root, "id_map")):
+            with open(os.path.join(self.root, "id_map"), encoding="utf-8") as f:
+                f.readline()  # header
+                old2new = {}
+                for l in f:
+                    parts = l.strip().split("\t", 2)
+                    old2new[parts[0]] = parts[1]
+
         print('  - metadata...', end='')
         features: List[str] = []
         scale_factors: List[float] = []
@@ -85,6 +93,7 @@ class Database(object):
                 assert items_mean[0] == items_cov[0]
                 n = len(items_mean) - 1
                 assert len(items_cov) == (n*(n+1))/2 + 1, 'Covariance count = %i, expected %i' % (len(items_cov), (n*(n+1))/2 + 1)
+                taxon_id = old2new.get(items_mean[0], items_mean[0])
                 mean = numpy.array(items_mean[1:], dtype=float)
                 cov = numpy.empty((n, n))
                 k = 1
@@ -93,7 +102,7 @@ class Database(object):
                         cov[i, j] = float(items_cov[k])
                         cov[j, i] = cov[i, j]
                         k += 1
-                self.id2stats[items_mean[0]] = (mean * self.scale_factors, cov * self.scale_factors[:, numpy.newaxis] * self.scale_factors[numpy.newaxis, :])
+                self.id2stats[taxon_id] = (mean * self.scale_factors, cov * self.scale_factors[:, numpy.newaxis] * self.scale_factors[numpy.newaxis, :])
         print('done')
 
         print('  - typical temperatures...', end='')
@@ -101,9 +110,10 @@ class Database(object):
         with open(os.path.join(self.root, 'mean_temp'), "r", encoding='utf-8') as f:
             f.readline()
             for l in f:
-                taxonid, mean_temp = l.rstrip('\n').split('\t')
+                taxon_id, mean_temp = l.rstrip('\n').split('\t')
                 if mean_temp != '':
-                    self.typical_temperature[taxonid] = float(mean_temp)
+                    taxon_id = old2new.get(taxon_id, taxon_id)
+                    self.typical_temperature[taxon_id] = float(mean_temp)
         print('done')
 
         print('  - phylogenetic covariances...', end='')
@@ -131,10 +141,11 @@ class Database(object):
             fmean.readline()
             fvar.readline()
             for lmean, lvar in zip(fmean, fvar):
-                taxonid1, mean_del_M = lmean.rstrip('\n').split('\t')
-                taxonid2, var_del_M = lvar.rstrip('\n').split('\t')
-                assert taxonid1 == taxonid2
-                self.id2del_M[taxonid1] = float(mean_del_M) * numpy.log(10.), float(var_del_M) * numpy.log(10.)**2
+                taxon_id1, mean_del_M = lmean.rstrip('\n').split('\t')
+                taxon_id2, var_del_M = lvar.rstrip('\n').split('\t')
+                assert taxon_id1 == taxon_id2
+                taxon_id = old2new.get(taxon_id1, taxon_id1)
+                self.id2del_M[taxon_id] = float(mean_del_M) * numpy.log(10.), float(var_del_M) * numpy.log(10.)**2
         _, self.phylocov_del_M = read_covariance(os.path.join(self.root, 'phylocov_del_M'))
         self.phylocov_del_M *= numpy.log(10.)**2
         self.transforms['del_M'] = 'ln'

@@ -1,4 +1,5 @@
 import argparse
+import os
 from . import infer, __version__
 
 def main():
@@ -10,6 +11,7 @@ def main():
     parser.add_argument('-v', '--version', action='version', version=f"%(prog)s {__version__}")
     args = parser.parse_args()
     taxon = infer.Taxon.from_name(args.taxon)
+    infer.use_offline_database()
     model = taxon.get_model()
     if args.c_T is None:
         T = taxon.typical_temperature

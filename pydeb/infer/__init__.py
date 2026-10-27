@@ -4,12 +4,23 @@ import urllib.parse
 import json
 import io
 import numpy
+import os
 
 from .. import model
 from . import database
 
-col_version = 'annual-checklist/2019' # 'col' for latest
+col_version = '2354'
 debber_url = 'https://deb.bolding-bruggeman.com'
+
+DEFAULT_DATABASE_DIR = os.path.join(os.path.dirname(__file__), "data")
+
+default_database = None
+
+def use_offline_database(db: Union[database.Database, str, None]=DEFAULT_DATABASE_DIR):
+    global default_database
+    if isinstance(db, str):
+        db = database.Database(db)
+    default_database = db
 
 rank2depth = {'root': -1, 'kingdom': 0, 'phylum': 1, 'class': 2, 'order': 3, 'superfamily': 3.5, 'family': 4, 'genus': 5, 'subgenus': 5.5, 'species': 6, 'infraspecies': 6.5}
 
@@ -22,21 +33,21 @@ class CoLResult(dict):
 
 def get_entries(name: str, exact: bool=False):
     name = name.lower()
-    f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?name=%s&response=full&format=json' % (col_version, urllib.parse.quote_plus(name)))
+    f = urllib.request.urlopen(f'http://api.checklistbank.org/dataset/{col_version}/nameusage/search?q={urllib.parse.quote_plus(name)}&content=SCIENTIFIC_NAME&content=VERNACULAR_NAME')
     data = json.load(f)
     results = []
     found_ids = set()
-    for entry in data.get('results', []):
-        if exact and entry['name'].lower() != name:
-            for cn in entry.get('common_names', []):
+    for entry in data.get('result', []):
+        if exact and entry["usage"]["name"]["scientificName"].lower() != name:
+            for cn in entry.get("vernacularNames", []):
                 if cn['name'].lower() == name:
                     break
             else:
                 continue
-        entry = entry.get('accepted_name', entry)
 
         # Avoid duplicates that may have come in by remapping to accepted_name
         if entry['id'] not in found_ids:
+            entry["url"] = f"https://www.checklistbank.org/dataset/{col_version}/taxon/{entry['id']}"
             results.append(entry)
             found_ids.add(entry['id'])
     return results
@@ -44,7 +55,9 @@ def get_entries(name: str, exact: bool=False):
 def get_ids(name: str, exact: bool=False):
     results = CoLResult()
     for entry in get_entries(name, exact):
-        results[entry['id']] = (entry['name_html'], entry['url'])
+        usage = entry["usage"]
+        accepted_id = usage.get('accepted', usage)["id"]
+        results[accepted_id] = (usage['labelHtml'], entry['url'])
     return results
 
 class ParameterEstimates(object):
@@ -144,40 +157,59 @@ class Taxon:
 
     @staticmethod
     def from_col_id(col_id: str) -> 'Taxon':
-        f = urllib.request.urlopen('http://catalogueoflife.org/%s/webservice?id=%s&response=full&format=json' % (col_version, col_id))
-        data = json.load(f)
-        entry = data['results'][0]
-        return Taxon(entry.get('accepted_name', entry))
+        f = urllib.request.urlopen(f'http://api.checklistbank.org/dataset/{col_version}/taxon/{col_id}/info')
+        entry = json.load(f)
+        return Taxon(entry)
 
     def __init__(self, entry):
-        self.col_id = entry['id']
-        self.name = entry['name']
-        self.rank = entry['rank']
-        self.classification = entry['classification'] + [entry]
+        usage = entry["usage"]
+        accepted = usage.get('accepted', usage)
+        self.col_id = accepted['id']
+        self.name = accepted['name']['scientificName']
+        self.rank = accepted['name']['rank']
+        self.classification = entry['classification']
+        if "accepted" not in usage:
+            usage["rank"] = self.rank
+            self.classification += [usage]
 
     @property
     def typified_model(self) -> str:
-        foetus = len(self.classification) >= 3 and self.classification[2]['id'] == '7a4d4854a73e6a4048d013af6416c253'
-        if foetus and len(self.classification) >= 4:
-            # Filter out egg-laying mammals (Monotremata)
-            foetus = self.classification[3]['id'] != '7ba80933a5c268f595f28d7ef689acac'
+        ids = {c['id'] for c in self.classification}
+        MAMMALIA = "54767753"
+        MONOTREMATA = "54768129"
+        foetus = MAMMALIA in ids and MONOTREMATA not in ids
         return 'stx' if foetus else 'abj'
 
     @property
     def typical_temperature(self) -> float:
-        f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, self.col_id))
-        result = json.load(f)
-        return result['typical_temperature']
+        return self.get_typical_temperature()
+
+    def get_typical_temperature(self, offline_db: Union[database.Database, str, None]=None) -> float:
+        if offline_db is None:
+            offline_db = default_database
+        if offline_db is None:
+            f = urllib.request.urlopen('%s?id=%s&taxonomy_only=1' % (debber_url, self.col_id))
+            result = json.load(f)
+            return result['typical_temperature']
+        else:
+            if isinstance(offline_db, str):
+                offline_db = database.Database(offline_db)
+            for t in self.classification[::-1]:
+                if t["id"] in offline_db.typical_temperature:
+                    return offline_db.typical_temperature[t["id"]]
 
     def infer_parameters(self, offline_db: Union[database.Database, str, None]=None, add_del_M: bool=False, verbose: bool=False) -> ParameterEstimates:
+        if offline_db is None:
+            offline_db = default_database
         return ParameterEstimates(self.col_id, offline_db, add_del_M, verbose=verbose)
 
-    def get_model(self) -> model.Model:
+    def get_model(self, offline_db: Union[database.Database, str, None]=None) -> model.Model:
         m = model.Model(type=self.typified_model)
-        for name, value in self.infer_parameters().median.items():
+        for name, value in self.infer_parameters(offline_db=offline_db).median.items():
             setattr(m, name, value)
         m.initialize()
         if not m.valid:
             raise Exception('Median parameter set is not valid.')
         print('Constructed model for %s %s (typified model %s)' % (self.rank.lower(), self.name, m.type))
         return m
+
